@@ -2,8 +2,19 @@ import SwiftUI
 import AppKit
 import MiniOpsCore
 
+public enum InspectorTab: String, CaseIterable {
+    case changes = "Changes"
+    case stashes = "Stashes"
+    case worktrees = "Worktrees"
+    case notes = "Notes"
+}
+
 public struct MainWindowView: View {
     @StateObject private var viewModel = WorkspaceViewModel()
+    @State private var activeInspectorTab: InspectorTab = .changes
+    @State private var isShowingBatchGitSheet: Bool = false
+    @State private var isPerformingGitAction: Bool = false
+    @State private var gitActionBanner: String?
 
     public init() {}
 
@@ -46,6 +57,12 @@ public struct MainWindowView: View {
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.secondary)
                         Spacer()
+                        Button(action: { isShowingBatchGitSheet = true }) {
+                            Text("Batch Git")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Run Batch Git Actions Across Repositories")
                     }
                     .padding(.horizontal, 10)
                     .padding(.top, 6)
@@ -106,18 +123,89 @@ public struct MainWindowView: View {
                     // Top App Toolbar
                     topToolbar(repo: repo)
 
+                    // Optional Git Banner
+                    if let banner = gitActionBanner {
+                        HStack {
+                            Image(systemName: "info.circle")
+                            Text(banner)
+                                .font(.system(size: 11))
+                            Spacer()
+                            Button(action: { gitActionBanner = nil }) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(Color.accentColor.opacity(0.12))
+                        Divider()
+                    }
+
                     Divider()
 
-                    // Main Content: Canvas or Git Changes Inspector
+                    // Main Content: Canvas or Inspector Panel
                     if viewModel.isGitInspectorOpen {
-                        GitChangesView(
-                            repoPath: repo.path,
-                            changes: repo.changedFiles,
-                            selectedFilesForCommit: $viewModel.selectedFilesForCommit,
-                            onGitOperationDone: {
-                                viewModel.refreshCurrentRepoStatus()
+                        VStack(spacing: 0) {
+                            // Inspector tab header
+                            HStack(spacing: 8) {
+                                Picker("", selection: $activeInspectorTab) {
+                                    Text("Changes (\(repo.changedFiles.count))").tag(InspectorTab.changes)
+                                    Text("Stashes").tag(InspectorTab.stashes)
+                                    Text("Worktrees").tag(InspectorTab.worktrees)
+                                    Text("Notes").tag(InspectorTab.notes)
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(maxWidth: 420)
+
+                                Spacer()
+
+                                Button(action: {
+                                    withAnimation {
+                                        viewModel.isGitInspectorOpen = false
+                                        viewModel.saveCurrentRepoLayout()
+                                    }
+                                }) {
+                                    Image(systemName: "xmark.circle")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.secondary)
+                                }
+                                .buttonStyle(.borderless)
                             }
-                        )
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color(NSColor.controlBackgroundColor))
+
+                            Divider()
+
+                            switch activeInspectorTab {
+                            case .changes:
+                                GitChangesView(
+                                    repoPath: repo.path,
+                                    changes: repo.changedFiles,
+                                    selectedFilesForCommit: $viewModel.selectedFilesForCommit,
+                                    onGitOperationDone: {
+                                        viewModel.refreshCurrentRepoStatus()
+                                    }
+                                )
+                            case .stashes:
+                                StashManagerView(
+                                    repoPath: repo.path,
+                                    onStashChanged: {
+                                        viewModel.refreshCurrentRepoStatus()
+                                    }
+                                )
+                            case .worktrees:
+                                WorktreeManagerView(
+                                    repoPath: repo.path,
+                                    onWorktreeChanged: {
+                                        viewModel.refreshCurrentRepoStatus()
+                                    }
+                                )
+                            case .notes:
+                                RepoNotesView(repoPath: repo.path)
+                            }
+                        }
                     } else {
                         SplitWorkspaceCanvasView(
                             repoPath: repo.path,
@@ -169,6 +257,11 @@ public struct MainWindowView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .sheet(isPresented: $isShowingBatchGitSheet) {
+            BatchGitSheetView(repos: viewModel.repositories, onComplete: {
+                viewModel.refreshRepositories()
+            })
+        }
         .alert("Unsaved Changes", isPresented: $viewModel.showUnsavedChangesAlert) {
             Button("Cancel", role: .cancel) {}
             Button("Discard Changes", role: .destructive) {
@@ -180,36 +273,67 @@ public struct MainWindowView: View {
     }
 
     private func topToolbar(repo: RepoInfo) -> some View {
-        HStack(spacing: 12) {
-            // Repo info
+        HStack(spacing: 10) {
+            // Repo info & branch switcher
             HStack(spacing: 6) {
                 Image(systemName: "folder.fill")
                     .foregroundColor(.accentColor)
                 Text(repo.name)
                     .font(.system(size: 13, weight: .bold))
 
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: 10))
-                    Text(repo.branch)
-                        .font(.system(size: 11, design: .monospaced))
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                BranchSwitcherView(
+                    repoPath: repo.path,
+                    currentBranch: repo.branch,
+                    onBranchChanged: {
+                        viewModel.refreshCurrentRepoStatus()
+                    }
+                )
 
                 if repo.isDirty {
                     Circle()
                         .fill(Color.orange)
                         .frame(width: 8, height: 8)
                 }
+
+                if repo.ahead > 0 || repo.behind > 0 {
+                    HStack(spacing: 2) {
+                        if repo.ahead > 0 { Text("↑\(repo.ahead)").foregroundColor(.green) }
+                        if repo.behind > 0 { Text("↓\(repo.behind)").foregroundColor(.blue) }
+                    }
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                }
             }
 
             Spacer()
 
+            // Quick Git Actions: Fetch & Pull
+            HStack(spacing: 4) {
+                Button(action: executeFetch) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                        Text("Fetch")
+                    }
+                    .font(.system(size: 11))
+                }
+                .disabled(isPerformingGitAction)
+                .help("Fetch all remotes and prune")
+
+                Button(action: executePull) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.down.circle")
+                        Text("Pull")
+                    }
+                    .font(.system(size: 11))
+                }
+                .disabled(isPerformingGitAction)
+                .help("Pull current branch (--ff-only)")
+            }
+
+            Divider().frame(height: 16)
+
             // View toggles
             HStack(spacing: 8) {
-                // Git changes toggle
+                // Git Inspector toggle
                 Button(action: {
                     withAnimation {
                         viewModel.isGitInspectorOpen.toggle()
@@ -217,8 +341,8 @@ public struct MainWindowView: View {
                     }
                 }) {
                     HStack(spacing: 4) {
-                        Image(systemName: "arrow.triangle.pull")
-                        Text("Changes (\(repo.changedFiles.count))")
+                        Image(systemName: "sidebar.right")
+                        Text("Tools (\(repo.changedFiles.count))")
                     }
                     .font(.system(size: 11, weight: viewModel.isGitInspectorOpen ? .bold : .regular))
                 }
@@ -255,5 +379,35 @@ public struct MainWindowView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color(NSColor.windowBackgroundColor))
+    }
+
+    private func executeFetch() {
+        guard let repo = viewModel.selectedRepo else { return }
+        isPerformingGitAction = true
+        gitActionBanner = "Fetching remotes for \(repo.name)..."
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let res = GitService.shared.fetch(repoPath: repo.path)
+            DispatchQueue.main.async {
+                isPerformingGitAction = false
+                gitActionBanner = res.success ? "Fetch completed." : (res.error ?? "Fetch failed.")
+                viewModel.refreshCurrentRepoStatus()
+            }
+        }
+    }
+
+    private func executePull() {
+        guard let repo = viewModel.selectedRepo else { return }
+        isPerformingGitAction = true
+        gitActionBanner = "Pulling latest changes for \(repo.name)..."
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let res = GitService.shared.pull(repoPath: repo.path)
+            DispatchQueue.main.async {
+                isPerformingGitAction = false
+                gitActionBanner = res.success ? (res.output.isEmpty ? "Pulled successfully." : res.output) : (res.error ?? "Pull failed.")
+                viewModel.refreshCurrentRepoStatus()
+            }
+        }
     }
 }
