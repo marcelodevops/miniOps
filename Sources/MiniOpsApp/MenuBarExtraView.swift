@@ -16,7 +16,8 @@ public struct MenuBarExtraView: View {
     }
 
     private var statusSummary: WorkspaceStatusSummary {
-        WorkspaceStatusSummary(dirtyCount: dirtyRepos.count, waitingAgentCount: 0)
+        let waiting = viewModel.activeAgents.filter { $0.isWaitingForInput }.count
+        return WorkspaceStatusSummary(dirtyCount: dirtyRepos.count, waitingAgentCount: waiting)
     }
 
     public var body: some View {

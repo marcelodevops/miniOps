@@ -62,11 +62,17 @@ struct MiniOpsApp: App {
         MenuBarExtra {
             MenuBarExtraView(viewModel: sharedViewModel)
         } label: {
+            let waitingCount = sharedViewModel.activeAgents.filter { $0.isWaitingForInput }.count
             let dirtyCount = sharedViewModel.repositories.filter { $0.isDirty }.count
             HStack(spacing: 3) {
-                Image(systemName: dirtyCount > 0 ? "circle.fill" : "checkmark.circle.fill")
-                if dirtyCount > 0 {
-                    Text("\(dirtyCount)")
+                if waitingCount > 0 {
+                    Image(systemName: "exclamationmark.circle.fill")
+                    Text("\(waitingCount)")
+                } else {
+                    Image(systemName: dirtyCount > 0 ? "circle.fill" : "checkmark.circle.fill")
+                    if dirtyCount > 0 {
+                        Text("\(dirtyCount)")
+                    }
                 }
             }
         }

@@ -573,3 +573,44 @@ print("==================================================")
 if failedCount > 0 {
     exit(1)
 }
+
+// Test 16: Autonomous Agent Process Detection and Parsing
+print("Test 16: Autonomous Agent Process Detection and Parsing")
+do {
+    let scanner = AgentScanner.shared
+    let mockPsOutput = """
+      PID     ELAPSED STAT TTY        %CPU COMMAND
+    12345    00:15:30 S    ttys001     0.0 claude --model sonnet
+    23456    01:00:00 R    ??         45.0 python3 train.py
+    34567    00:05:22 S+   ttys002     0.0 /opt/homebrew/bin/aider --watch
+    45678    00:02:10 R    ttys003    12.5 /Applications/ChatGPT.app/Contents/Resources/codex app-server
+    56789    00:01:00 S    ??          0.0 grep claude
+    """
+
+    let agents = scanner.parsePsOutput(mockPsOutput, repositories: [])
+    assertEqual(agents.count, 3, "Exactly 3 agents parsed (claude, aider, codex)")
+
+    let claude = agents.first(where: { $0.tool == "Claude Code" })
+    assert(claude != nil, "Claude Code agent found")
+    assertEqual(claude?.pid, 12345, "Claude PID is 12345")
+    assertEqual(claude?.isWaitingForInput, true, "Claude is waiting for input (TTY, S state, 0.0 CPU)")
+
+    let aider = agents.first(where: { $0.tool == "Aider" })
+    assert(aider != nil, "Aider agent found")
+    assertEqual(aider?.isWaitingForInput, true, "Aider is waiting for input")
+
+    let codex = agents.first(where: { $0.tool == "OpenAI Codex" })
+    assert(codex != nil, "OpenAI Codex agent found")
+    assertEqual(codex?.isWaitingForInput, false, "Codex is running (12.5 CPU)")
+
+    // Verify ordering: waiting agents come first
+    assertEqual(agents.first?.isWaitingForInput, true, "First agent in list is waiting for input")
+}
+
+print("==================================================")
+print("All Milestone 4 Tests Completed: \(passedCount) passed, \(failedCount) failed")
+print("==================================================")
+
+if failedCount > 0 {
+    exit(1)
+}

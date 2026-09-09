@@ -23,6 +23,9 @@ public final class WorkspaceViewModel: ObservableObject {
 
     // Git changes state
     @Published public var selectedFilesForCommit: Set<String> = []
+    @Published public var activeAgents: [AgentInfo] = []
+    private var previouslyNotifiedWaitingPIDs: Set<Int> = []
+    private let agentScanner = AgentScanner.shared
 
     // Alert for unsaved changes
     @Published public var showUnsavedChangesAlert: Bool = false
@@ -59,6 +62,7 @@ public final class WorkspaceViewModel: ObservableObject {
     public func refreshRepositories() {
         guard !workspacePath.isEmpty else { return }
         repositories = scanner.scan(rootPath: workspacePath)
+        refreshAgents()
 
         // If selected repo still exists, refresh it
         if let current = selectedRepo {
@@ -195,6 +199,24 @@ public final class WorkspaceViewModel: ObservableObject {
         if openPanel.runModal() == .OK, let url = openPanel.url {
             setWorkspace(path: url.path)
         }
+    }
+
+    public func refreshAgents() {
+        let agents = agentScanner.scanAgents(repositories: repositories)
+        self.activeAgents = agents
+
+        for agent in agents where agent.isWaitingForInput {
+            if !previouslyNotifiedWaitingPIDs.contains(agent.pid) {
+                previouslyNotifiedWaitingPIDs.insert(agent.pid)
+                NotificationService.shared.sendNotification(
+                    title: "\(agent.tool) Needs Attention",
+                    body: "Waiting for input in \(agent.repoName ?? "terminal")"
+                )
+            }
+        }
+
+        let currentPIDs = Set(agents.map { $0.pid })
+        previouslyNotifiedWaitingPIDs = previouslyNotifiedWaitingPIDs.intersection(currentPIDs)
     }
 
     public func setupNotificationListeners() {

@@ -149,3 +149,41 @@ public struct BatchGitResult: Sendable {
         self.failureCount = results.values.filter { !$0.success }.count
     }
 }
+
+public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
+    public var id: Int { pid }
+    public let pid: Int
+    public let tool: String
+    public let status: String // "waiting" or "running"
+    public let isWaitingForInput: Bool
+    public let elapsed: String
+    public let cpu: Double
+    public let tty: String
+    public let repoName: String?
+    public let repoPath: String?
+    public let command: String
+
+    public init(
+        pid: Int,
+        tool: String,
+        status: String,
+        isWaitingForInput: Bool,
+        elapsed: String,
+        cpu: Double = 0.0,
+        tty: String = "",
+        repoName: String? = nil,
+        repoPath: String? = nil,
+        command: String = ""
+    ) {
+        self.pid = pid
+        self.tool = tool
+        self.status = status
+        self.isWaitingForInput = isWaitingForInput
+        self.elapsed = elapsed
+        self.cpu = cpu
+        self.tty = tty
+        self.repoName = repoName
+        self.repoPath = repoPath
+        self.command = command
+    }
+}

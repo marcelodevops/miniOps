@@ -7,6 +7,7 @@ public enum InspectorTab: String, CaseIterable {
     case stashes = "Stashes"
     case worktrees = "Worktrees"
     case notes = "Notes"
+    case agents = "Agents"
 }
 
 public struct MainWindowView: View {
@@ -156,6 +157,7 @@ public struct MainWindowView: View {
                                     Text("Stashes").tag(InspectorTab.stashes)
                                     Text("Worktrees").tag(InspectorTab.worktrees)
                                     Text("Notes").tag(InspectorTab.notes)
+                                    Text("Agents (\(viewModel.activeAgents.count))").tag(InspectorTab.agents)
                                 }
                                 .pickerStyle(.segmented)
                                 .frame(maxWidth: 420)
@@ -206,6 +208,18 @@ public struct MainWindowView: View {
                                 )
                             case .notes:
                                 RepoNotesView(repoPath: repo.path)
+                            case .agents:
+                                AgentInspectorView(
+                                    agents: viewModel.activeAgents,
+                                    onSelectRepo: { path in
+                                        if let target = viewModel.repositories.first(where: { $0.path == path }) {
+                                            viewModel.selectRepo(target)
+                                        }
+                                    },
+                                    onRefresh: {
+                                        viewModel.refreshAgents()
+                                    }
+                                )
                             }
                         }
                     } else {
