@@ -1,0 +1,306 @@
+import Foundation
+import MiniOpsCore
+
+var passedCount = 0
+var failedCount = 0
+
+func assert(_ condition: Bool, _ message: String, file: StaticString = #file, line: UInt = #line) {
+    if !condition {
+        print("  ❌ Assertion Failed [\(line)]: \(message)")
+        failedCount += 1
+    } else {
+        passedCount += 1
+    }
+}
+
+func assertEqual<T: Equatable>(_ a: T, _ b: T, _ message: String = "", file: StaticString = #file, line: UInt = #line) {
+    if a != b {
+        print("  ❌ Assertion Failed [\(line)]: expected '\(b)', got '\(a)'. \(message)")
+        failedCount += 1
+    } else {
+        passedCount += 1
+    }
+}
+
+func runGit(args: [String], in dir: String) -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = args
+    process.currentDirectoryURL = URL(fileURLWithPath: dir)
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    try? process.run()
+    process.waitUntilExit()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+}
+
+func setupTempRepo() -> (tempDir: URL, repoURL: URL) {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    let repoURL = tempDir.appendingPathComponent("test-repo")
+    try! FileManager.default.createDirectory(at: repoURL, withIntermediateDirectories: true)
+
+    _ = runGit(args: ["init", "-b", "main"], in: repoURL.path)
+    _ = runGit(args: ["config", "user.name", "miniOps Test"], in: repoURL.path)
+    _ = runGit(args: ["config", "user.email", "test@example.com"], in: repoURL.path)
+    _ = runGit(args: ["config", "commit.gpgsign", "false"], in: repoURL.path)
+    return (tempDir, repoURL)
+}
+
+print("==================================================")
+print("Running miniOps Git Safety & Correctness Tests")
+print("==================================================")
+
+// Test 1: Selective Commit Stages Only Specified Paths
+print("Test 1: Selective Commit Stages Only Specified Paths")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fileA = repoURL.appendingPathComponent("a.txt")
+    let fileB = repoURL.appendingPathComponent("b.txt")
+    try! "content A".write(to: fileA, atomically: true, encoding: .utf8)
+    try! "content B".write(to: fileB, atomically: true, encoding: .utf8)
+
+    let gitService = GitService.shared
+    let result = gitService.selectiveCommit(repoPath: repoURL.path, message: "Commit only a", selectedPaths: ["a.txt"])
+    assert(result.success, "Commit should succeed: \(result.error ?? "")")
+
+    let committed = runGit(args: ["show", "--pretty=", "--name-only", "HEAD"], in: repoURL.path)
+    assert(committed.contains("a.txt"), "Committed files must contain a.txt")
+    assert(!committed.contains("b.txt"), "Committed files must NOT contain b.txt")
+
+    let status = runGit(args: ["status", "--porcelain"], in: repoURL.path)
+    assert(status.contains("?? b.txt"), "b.txt must remain untracked")
+}
+
+// Test 2: Selective Commit Preserves Excluded Staging
+print("Test 2: Selective Commit Preserves Excluded Staging")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let excludedFile = repoURL.appendingPathComponent("excluded.txt")
+    let selectedFile = repoURL.appendingPathComponent("selected.txt")
+    try! "excluded content".write(to: excludedFile, atomically: true, encoding: .utf8)
+    _ = runGit(args: ["add", "excluded.txt"], in: repoURL.path)
+
+    try! "selected content".write(to: selectedFile, atomically: true, encoding: .utf8)
+
+    let gitService = GitService.shared
+    let result = gitService.selectiveCommit(repoPath: repoURL.path, message: "Commit selected only", selectedPaths: ["selected.txt"])
+    assert(result.success, "Commit should succeed: \(result.error ?? "")")
+
+    let committed = runGit(args: ["show", "--pretty=", "--name-only", "HEAD"], in: repoURL.path)
+    assertEqual(committed, "selected.txt", "Only selected.txt should be in the commit")
+
+    let staged = runGit(args: ["diff", "--cached", "--name-only"], in: repoURL.path)
+    assertEqual(staged, "excluded.txt", "Excluded staged file must remain staged!")
+}
+
+// Test 3: Selective Commit Treats Wildcards And Spaces Literally
+print("Test 3: Selective Commit Treats Wildcards And Spaces Literally")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let wildcardFile = repoURL.appendingPathComponent("*.txt")
+    let spacedFile = repoURL.appendingPathComponent("file with spaces.txt")
+    let otherFile = repoURL.appendingPathComponent("other.txt")
+
+    try! "literal wildcard".write(to: wildcardFile, atomically: true, encoding: .utf8)
+    try! "spaced content".write(to: spacedFile, atomically: true, encoding: .utf8)
+    try! "other content".write(to: otherFile, atomically: true, encoding: .utf8)
+
+    let gitService = GitService.shared
+    let result = gitService.selectiveCommit(repoPath: repoURL.path, message: "Commit literal files", selectedPaths: ["*.txt", "file with spaces.txt"])
+    assert(result.success, "Commit should succeed: \(result.error ?? "")")
+
+    let committed = runGit(args: ["show", "--pretty=", "--name-only", "HEAD"], in: repoURL.path)
+    assert(committed.contains("*.txt"), "Commit must contain *.txt literally")
+    assert(committed.contains("file with spaces.txt"), "Commit must contain file with spaces.txt")
+    assert(!committed.contains("other.txt"), "Commit must NOT contain other.txt")
+}
+
+// Test 4: Selective Commit Rejects Empty And Traversal Paths
+print("Test 4: Selective Commit Rejects Empty And Traversal Paths")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let gitService = GitService.shared
+    let emptyRes = gitService.selectiveCommit(repoPath: repoURL.path, message: "Empty selection", selectedPaths: [])
+    assert(!emptyRes.success, "Empty selection should fail")
+    assert(emptyRes.error?.contains("No files selected") == true, "Expected 'No files selected' error")
+
+    let traversalRes = gitService.selectiveCommit(repoPath: repoURL.path, message: "Traversal", selectedPaths: ["../escape.txt"])
+    assert(!traversalRes.success, "Traversal should fail")
+}
+
+// Test 5: Repo Lock Serializes Concurrent Mutations
+print("Test 5: Repo Lock Serializes Concurrent Mutations")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let lockManager = RepoLockManager()
+    let pathA = repoURL.path
+    let pathB = tempDir.appendingPathComponent("other-repo").path
+
+    let semEntered = DispatchSemaphore(value: 0)
+    let semRelease = DispatchSemaphore(value: 0)
+
+    var threadBBlocked = false
+    var threadBAllowedOther = false
+
+    let queueA = DispatchQueue(label: "threadA")
+    let queueB = DispatchQueue(label: "threadB")
+
+    queueA.async {
+        do {
+            _ = try lockManager.withRepoLock(repoPath: pathA, action: "slowOperation") {
+                semEntered.signal()
+                _ = semRelease.wait(timeout: .now() + 2.0)
+            }
+        } catch {
+            print("Thread A error: \(error)")
+        }
+    }
+
+    _ = semEntered.wait(timeout: .now() + 2.0)
+
+    queueB.sync {
+        do {
+            _ = try lockManager.withRepoLock(repoPath: pathA, action: "fastOperation") {}
+        } catch RepoLockError.repositoryBusy {
+            threadBBlocked = true
+        } catch {
+            print("Unexpected error on same repo: \(error)")
+        }
+
+        do {
+            _ = try lockManager.withRepoLock(repoPath: pathB, action: "otherOperation") {
+                threadBAllowedOther = true
+            }
+        } catch {
+            print("Unexpected error on other repo: \(error)")
+        }
+    }
+
+    assert(threadBBlocked, "Thread B must be blocked on same repo")
+    assert(threadBAllowedOther, "Thread B must be allowed on different repo")
+
+    semRelease.signal()
+    Thread.sleep(forTimeInterval: 0.1)
+
+    var subsequentSuccess = false
+    queueB.sync {
+        do {
+            _ = try lockManager.withRepoLock(repoPath: pathA, action: "subsequentOperation") {
+                subsequentSuccess = true
+            }
+        } catch {
+            print("Subsequent error: \(error)")
+        }
+    }
+    assert(subsequentSuccess, "Lock must be released and available for next operation")
+}
+
+// Test 6: Cancellation Does Not Release Running Operation
+print("Test 6: Cancellation Does Not Release Running Operation")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let lockManager = RepoLockManager()
+    let pathA = repoURL.path
+
+    let key = try! lockManager.tryAcquire(repoPath: pathA, action: "runningOp")
+    assert(lockManager.isBusy(repoPath: pathA), "Lock must be busy")
+
+    let (cancelled, _) = lockManager.cancelOperation(repoPath: pathA)
+    assert(!cancelled, "Operation should not be cancelled if running")
+    assert(lockManager.isBusy(repoPath: pathA), "Lock must not be released merely on cancel request")
+
+    lockManager.release(repoKey: key)
+    assert(!lockManager.isBusy(repoPath: pathA), "Lock is released only when operation terminates")
+}
+
+// Test 7: Workspace Scanner Grouping Folder Discovery
+print("Test 7: Workspace Scanner Grouping Folder Discovery")
+do {
+    let (tempDir, _) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let root = tempDir.appendingPathComponent("scanner-root")
+    let directRepo = root.appendingPathComponent("direct-repo")
+    let groupDir = root.appendingPathComponent("GROUP-A")
+    let nested1 = groupDir.appendingPathComponent("nested-1")
+    let nested2 = groupDir.appendingPathComponent("nested-2")
+
+    for d in [directRepo, nested1, nested2] {
+        try! FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        _ = runGit(args: ["init", "-b", "main"], in: d.path)
+    }
+
+    let scanner = WorkspaceScanner.shared
+    let repos = scanner.scan(rootPath: root.path)
+
+    assertEqual(repos.count, 3, "Scanner must find exactly 3 repositories")
+    let direct = repos.first { $0.name == "direct-repo" }
+    assert(direct != nil, "Direct repo found")
+    assert(direct?.groupName == nil, "Direct repo has no group")
+
+    let n1 = repos.first { $0.name == "nested-1" }
+    assert(n1 != nil, "Nested repo 1 found")
+    assertEqual(n1?.groupName, "GROUP-A", "Nested repo 1 belongs to GROUP-A")
+
+    let n2 = repos.first { $0.name == "nested-2" }
+    assert(n2 != nil, "Nested repo 2 found")
+    assertEqual(n2?.groupName, "GROUP-A", "Nested repo 2 belongs to GROUP-A")
+}
+
+// Test 8: File System Security And State Persistence
+print("Test 8: File System Security And State Persistence")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fs = FileSystemService.shared
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "hello.txt", content: "Hello miniOps")
+    let readBack = try! fs.readFile(repoPath: repoURL.path, filePath: "hello.txt")
+    assertEqual(readBack, "Hello miniOps", "Content read matches written")
+
+    var readEscaped = false
+    do {
+        _ = try fs.readFile(repoPath: repoURL.path, filePath: "../secret.txt")
+        readEscaped = true
+    } catch {
+        // Expected
+    }
+    assert(!readEscaped, "Reading outside repo must throw error")
+
+    // State persistence
+    let tempStateURL = tempDir.appendingPathComponent("custom-state.json")
+    let stateStore = WorkspaceStateStore(customStorageURL: tempStateURL)
+    var layout = RepoLayoutState()
+    layout.selectedFilePath = "hello.txt"
+    layout.terminalHeightRatio = 0.45
+    layout.expandedFolderPaths = ["Sources", "Tests"]
+    stateStore.saveRepoState(repoPath: repoURL.path, state: layout)
+
+    let loaded = stateStore.getRepoState(repoPath: repoURL.path)
+    assertEqual(loaded.selectedFilePath, "hello.txt", "Restored selected file path")
+    assertEqual(loaded.terminalHeightRatio, 0.45, "Restored terminal height ratio")
+    assertEqual(loaded.expandedFolderPaths, ["Sources", "Tests"], "Restored expanded folders")
+}
+
+print("==================================================")
+print("Test Results: \(passedCount) passed, \(failedCount) failed")
+print("==================================================")
+
+if failedCount > 0 {
+    exit(1)
+}

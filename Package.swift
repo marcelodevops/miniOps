@@ -8,6 +8,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "miniOps", targets: ["MiniOpsApp"]),
+        .executable(name: "miniOpsTests", targets: ["MiniOpsTestRunner"]),
         .library(name: "MiniOpsCore", targets: ["MiniOpsCore"]),
     ],
     dependencies: [
@@ -25,8 +26,8 @@ let package = Package(
                 .product(name: "SwiftTerm", package: "SwiftTerm")
             ]
         ),
-        .testTarget(
-            name: "MiniOpsCoreTests",
+        .executableTarget(
+            name: "MiniOpsTestRunner",
             dependencies: ["MiniOpsCore"]
         ),
     ]
