@@ -308,3 +308,300 @@ public final class GitService: @unchecked Sendable {
         }
     }
 }
+
+// MARK: - Extended Git Operations
+extension GitService {
+    private static let branchRegex = try! NSRegularExpression(pattern: "^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+    private static let stashRefRegex = try! NSRegularExpression(pattern: "^stash@\\{[0-9]+\\}$")
+
+    public func fetch(repoPath: String) -> GitOperationResult {
+        do {
+            return try lockManager.withRepoLock(repoPath: repoPath, action: "fetch") {
+                let res = runGit(args: ["fetch", "--all", "--prune"], in: repoPath, timeout: 60)
+                if res.status != 0 {
+                    let err = res.stderr.isEmpty ? res.stdout : res.stderr
+                    return GitOperationResult(success: false, error: "Git fetch failed: \(err)")
+                }
+                return GitOperationResult(success: true, output: res.stdout.isEmpty ? "Fetch completed." : res.stdout)
+            }
+        } catch {
+            return GitOperationResult(success: false, error: error.localizedDescription)
+        }
+    }
+
+    public func pull(repoPath: String) -> GitOperationResult {
+        do {
+            return try lockManager.withRepoLock(repoPath: repoPath, action: "pull") {
+                let res = runGit(args: ["pull", "--ff-only"], in: repoPath, timeout: 60)
+                if res.status != 0 {
+                    let err = res.stderr.isEmpty ? res.stdout : res.stderr
+                    return GitOperationResult(success: false, error: "Git pull failed: \(err)")
+                }
+                return GitOperationResult(success: true, output: res.stdout.isEmpty ? "Already up to date." : res.stdout)
+            }
+        } catch {
+            return GitOperationResult(success: false, error: error.localizedDescription)
+        }
+    }
+
+    public func listBranches(repoPath: String) -> [String] {
+        let res = runGit(args: ["branch", "--list", "--format=%(refname:short)"], in: repoPath)
+        guard res.status == 0 else { return [] }
+        return res.stdout.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    public func checkout(repoPath: String, branch: String) -> GitOperationResult {
+        let trimmed = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let range = NSRange(location: 0, length: trimmed.utf16.count)
+        guard Self.branchRegex.firstMatch(in: trimmed, range: range) != nil else {
+            return GitOperationResult(success: false, error: "Invalid branch name: \(branch)")
+        }
+
+        do {
+            return try lockManager.withRepoLock(repoPath: repoPath, action: "checkout") {
+                let res = runGit(args: ["checkout", trimmed], in: repoPath)
+                if res.status != 0 {
+                    let err = res.stderr.isEmpty ? res.stdout : res.stderr
+                    return GitOperationResult(success: false, error: "Git checkout failed: \(err)")
+                }
+                return GitOperationResult(success: true, output: res.stdout)
+            }
+        } catch {
+            return GitOperationResult(success: false, error: error.localizedDescription)
+        }
+    }
+
+    public func createBranch(repoPath: String, branchName: String, startPoint: String? = nil) -> GitOperationResult {
+        let trimmed = branchName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let range = NSRange(location: 0, length: trimmed.utf16.count)
+        guard Self.branchRegex.firstMatch(in: trimmed, range: range) != nil else {
+            return GitOperationResult(success: false, error: "Invalid branch name: \(branchName)")
+        }
+
+        var args = ["checkout", "-b", trimmed]
+        if let start = startPoint?.trimmingCharacters(in: .whitespacesAndNewlines), !start.isEmpty {
+            let startRange = NSRange(location: 0, length: start.utf16.count)
+            guard Self.branchRegex.firstMatch(in: start, range: startRange) != nil else {
+                return GitOperationResult(success: false, error: "Invalid start point branch name: \(start)")
+            }
+            args.append(start)
+        }
+
+        do {
+            return try lockManager.withRepoLock(repoPath: repoPath, action: "createBranch") {
+                let res = runGit(args: args, in: repoPath)
+                if res.status != 0 {
+                    let err = res.stderr.isEmpty ? res.stdout : res.stderr
+                    return GitOperationResult(success: false, error: "Git create branch failed: \(err)")
+                }
+                return GitOperationResult(success: true, output: res.stdout)
+            }
+        } catch {
+            return GitOperationResult(success: false, error: error.localizedDescription)
+        }
+    }
+
+    public func listStashes(repoPath: String) -> [GitStashItem] {
+        let res = runGit(args: ["stash", "list", "--format=%gd%x1f%gs%x1f%ci"], in: repoPath)
+        guard res.status == 0 else { return [] }
+        var items: [GitStashItem] = []
+        for line in res.stdout.components(separatedBy: "\n") {
+            let parts = line.components(separatedBy: "\u{1f}")
+            if parts.count >= 2 {
+                let ref = parts[0].trimmingCharacters(in: .whitespaces)
+                let msg = parts[1].trimmingCharacters(in: .whitespaces)
+                let date = parts.count > 2 ? parts[2].trimmingCharacters(in: .whitespaces) : ""
+                let range = NSRange(location: 0, length: ref.utf16.count)
+                if Self.stashRefRegex.firstMatch(in: ref, range: range) != nil {
+                    items.append(GitStashItem(ref: ref, message: msg, date: date))
+                }
+            }
+        }
+        return items
+    }
+
+    public func stash(repoPath: String, message: String = "") -> GitOperationResult {
+        do {
+            return try lockManager.withRepoLock(repoPath: repoPath, action: "stash") {
+                var args = ["stash", "push", "-u"]
+                let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    args.append(contentsOf: ["-m", trimmed])
+                }
+                let res = runGit(args: args, in: repoPath)
+                if res.status != 0 {
+                    let err = res.stderr.isEmpty ? res.stdout : res.stderr
+                    return GitOperationResult(success: false, error: "Git stash failed: \(err)")
+                }
+                return GitOperationResult(success: true, output: res.stdout)
+            }
+        } catch {
+            return GitOperationResult(success: false, error: error.localizedDescription)
+        }
+    }
+
+    public func showStash(repoPath: String, stashRef: String) -> String {
+        let trimmed = stashRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        let range = NSRange(location: 0, length: trimmed.utf16.count)
+        guard Self.stashRefRegex.firstMatch(in: trimmed, range: range) != nil else {
+            return "Invalid stash reference: \(stashRef)"
+        }
+        let res = runGit(args: ["stash", "show", "--include-untracked", "--patch", "--no-color", trimmed], in: repoPath)
+        return res.stdout.isEmpty ? (res.stderr.isEmpty ? "No differences" : res.stderr) : res.stdout
+    }
+
+    public func popStash(repoPath: String, stashRef: String = "stash@{0}") -> GitOperationResult {
+        let trimmed = stashRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        let range = NSRange(location: 0, length: trimmed.utf16.count)
+        guard Self.stashRefRegex.firstMatch(in: trimmed, range: range) != nil else {
+            return GitOperationResult(success: false, error: "Invalid stash reference: \(stashRef)")
+        }
+
+        do {
+            return try lockManager.withRepoLock(repoPath: repoPath, action: "popStash") {
+                // Check if repo has uncommitted changes
+                let (_, isDirty, _, _, _) = getRepoStatus(repoPath: repoPath)
+                if isDirty {
+                    return GitOperationResult(success: false, error: "Stash pop requires a clean working tree to prevent conflicts")
+                }
+
+                let res = runGit(args: ["stash", "pop", trimmed], in: repoPath)
+                if res.status != 0 {
+                    let err = res.stderr.isEmpty ? res.stdout : res.stderr
+                    return GitOperationResult(success: false, error: "Git stash pop failed: \(err)")
+                }
+                return GitOperationResult(success: true, output: res.stdout)
+            }
+        } catch {
+            return GitOperationResult(success: false, error: error.localizedDescription)
+        }
+    }
+
+    public func listWorktrees(repoPath: String) -> [GitWorktreeItem] {
+        let res = runGit(args: ["worktree", "list", "--porcelain"], in: repoPath)
+        guard res.status == 0 else { return [] }
+
+        var items: [GitWorktreeItem] = []
+        var currentPath = ""
+        var currentHead = ""
+        var currentBranch = ""
+        let targetNorm = URL(fileURLWithPath: repoPath).resolvingSymlinksInPath().standardized.path
+
+        for line in res.stdout.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                if !currentPath.isEmpty {
+                    let isMain = URL(fileURLWithPath: currentPath).resolvingSymlinksInPath().standardized.path == targetNorm
+                    items.append(GitWorktreeItem(path: currentPath, head: currentHead, branch: currentBranch, isMain: isMain))
+                    currentPath = ""
+                    currentHead = ""
+                    currentBranch = ""
+                }
+                continue
+            }
+
+            if trimmed.hasPrefix("worktree ") {
+                currentPath = String(trimmed.dropFirst("worktree ".count)).trimmingCharacters(in: .whitespaces)
+            } else if trimmed.hasPrefix("HEAD ") {
+                currentHead = String(trimmed.dropFirst("HEAD ".count)).trimmingCharacters(in: .whitespaces).prefix(7).description
+            } else if trimmed.hasPrefix("branch ") {
+                let ref = String(trimmed.dropFirst("branch ".count)).trimmingCharacters(in: .whitespaces)
+                currentBranch = ref.replacingOccurrences(of: "refs/heads/", with: "")
+            }
+        }
+
+        if !currentPath.isEmpty {
+            let isMain = URL(fileURLWithPath: currentPath).resolvingSymlinksInPath().standardized.path == targetNorm
+            items.append(GitWorktreeItem(path: currentPath, head: currentHead, branch: currentBranch, isMain: isMain))
+        }
+
+        return items
+    }
+
+    public func addWorktree(repoPath: String, worktreePath: String, branch: String? = nil, newBranch: String? = nil) -> GitOperationResult {
+        let cleanPath = (worktreePath as NSString).expandingTildeInPath
+        guard !cleanPath.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return GitOperationResult(success: false, error: "Missing worktree destination path")
+        }
+
+        var args = ["worktree", "add"]
+        if let nb = newBranch?.trimmingCharacters(in: .whitespaces), !nb.isEmpty {
+            let range = NSRange(location: 0, length: nb.utf16.count)
+            guard Self.branchRegex.firstMatch(in: nb, range: range) != nil else {
+                return GitOperationResult(success: false, error: "Invalid new branch name: \(nb)")
+            }
+            args.append(contentsOf: ["-b", nb, cleanPath])
+            if let b = branch?.trimmingCharacters(in: .whitespaces), !b.isEmpty {
+                args.append(b)
+            }
+        } else if let b = branch?.trimmingCharacters(in: .whitespaces), !b.isEmpty {
+            args.append(contentsOf: [cleanPath, b])
+        } else {
+            args.append(cleanPath)
+        }
+
+        do {
+            return try lockManager.withRepoLock(repoPath: repoPath, action: "addWorktree") {
+                let res = runGit(args: args, in: repoPath)
+                if res.status != 0 {
+                    let err = res.stderr.isEmpty ? res.stdout : res.stderr
+                    return GitOperationResult(success: false, error: "Git worktree add failed: \(err)")
+                }
+                return GitOperationResult(success: true, output: res.stdout)
+            }
+        } catch {
+            return GitOperationResult(success: false, error: error.localizedDescription)
+        }
+    }
+
+    public func removeWorktree(repoPath: String, worktreePath: String, force: Bool = false) -> GitOperationResult {
+        let cleanPath = (worktreePath as NSString).expandingTildeInPath
+        var args = ["worktree", "remove"]
+        if force {
+            args.append("--force")
+        }
+        args.append(cleanPath)
+
+        do {
+            return try lockManager.withRepoLock(repoPath: repoPath, action: "removeWorktree") {
+                let res = runGit(args: args, in: repoPath)
+                if res.status != 0 {
+                    let err = res.stderr.isEmpty ? res.stdout : res.stderr
+                    return GitOperationResult(success: false, error: "Git worktree remove failed: \(err)")
+                }
+                return GitOperationResult(success: true, output: res.stdout)
+            }
+        } catch {
+            return GitOperationResult(success: false, error: error.localizedDescription)
+        }
+    }
+
+    public func batchGit(action: String, repoPaths: [String]) -> BatchGitResult {
+        var results: [String: GitOperationResult] = [:]
+        for path in repoPaths {
+            switch action {
+            case "fetch":
+                results[path] = fetch(repoPath: path)
+            case "pull":
+                let (_, isDirty, _, _, _) = getRepoStatus(repoPath: path)
+                if isDirty {
+                    results[path] = GitOperationResult(success: false, error: "Skipped: repository has uncommitted changes")
+                } else {
+                    results[path] = pull(repoPath: path)
+                }
+            case "reconcile":
+                results[path] = reconcile(repoPath: path, message: "reconciling latest changes")
+            case "stash":
+                let (_, isDirty, _, _, _) = getRepoStatus(repoPath: path)
+                if isDirty {
+                    results[path] = stash(repoPath: path, message: "miniOps batch stash")
+                } else {
+                    results[path] = GitOperationResult(success: true, output: "Clean, no stash needed")
+                }
+            default:
+                results[path] = GitOperationResult(success: false, error: "Unknown batch action: \(action)")
+            }
+        }
+        return BatchGitResult(action: action, results: results)
+    }
+}

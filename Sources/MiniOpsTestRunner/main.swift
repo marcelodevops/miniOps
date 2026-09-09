@@ -402,3 +402,148 @@ print("==================================================")
 if failedCount > 0 {
     exit(1)
 }
+
+// Test 11: Branch Creation and Checkout
+print("Test 11: Branch Creation and Checkout")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fs = FileSystemService.shared
+    let gitService = GitService.shared
+
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "init.txt", content: "init\n")
+    _ = runGit(args: ["add", "init.txt"], in: repoURL.path)
+    _ = runGit(args: ["commit", "-m", "initial commit"], in: repoURL.path)
+
+    let createRes = gitService.createBranch(repoPath: repoURL.path, branchName: "feature/login-ui")
+    assert(createRes.success, "Branch creation should succeed")
+
+    let currentBranch = runGit(args: ["branch", "--show-current"], in: repoURL.path)
+    assertEqual(currentBranch, "feature/login-ui", "Switched to newly created branch")
+
+    let branches = gitService.listBranches(repoPath: repoURL.path)
+    assert(branches.contains("feature/login-ui"), "Branch list contains feature/login-ui")
+    assert(branches.contains("main"), "Branch list contains main")
+
+    let checkoutRes = gitService.checkout(repoPath: repoURL.path, branch: "main")
+    assert(checkoutRes.success, "Checkout main should succeed")
+    assertEqual(runGit(args: ["branch", "--show-current"], in: repoURL.path), "main", "Switched back to main")
+}
+
+// Test 12: Stash Creation, Listing, Inspection, and Safe Pop
+print("Test 12: Stash Creation, Listing, Inspection, and Safe Pop")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fs = FileSystemService.shared
+    let gitService = GitService.shared
+
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "code.txt", content: "version 1\n")
+    _ = runGit(args: ["add", "code.txt"], in: repoURL.path)
+    _ = runGit(args: ["commit", "-m", "v1"], in: repoURL.path)
+
+    // Make changes
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "code.txt", content: "version 2 (in progress)\n")
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "untracked.txt", content: "new notes\n")
+
+    let initialStashes = gitService.listStashes(repoPath: repoURL.path)
+    assertEqual(initialStashes.count, 0, "No stashes initially")
+
+    let stashRes = gitService.stash(repoPath: repoURL.path, message: "WIP feature")
+    assert(stashRes.success, "Stash should succeed")
+
+    // Working tree is clean now
+    let (_, isDirty, _, _, _) = gitService.getRepoStatus(repoPath: repoURL.path)
+    assertEqual(isDirty, false, "Working tree is clean after stash")
+
+    let stashes = gitService.listStashes(repoPath: repoURL.path)
+    assertEqual(stashes.count, 1, "One stash item in list")
+    assertEqual(stashes.first?.ref, "stash@{0}", "Stash ref matches stash@{0}")
+    assert(stashes.first?.message.contains("WIP feature") == true, "Stash message preserved")
+
+    // Inspect stash diff
+    let stashDiff = gitService.showStash(repoPath: repoURL.path, stashRef: "stash@{0}")
+    assert(stashDiff.contains("+version 2 (in progress)"), "Stash diff contains modified content")
+
+    // Test safe pop: dirty tree blocks pop
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "blocker.txt", content: "dirty work\n")
+    let dirtyPop = gitService.popStash(repoPath: repoURL.path, stashRef: "stash@{0}")
+    assert(!dirtyPop.success, "Pop should fail when tree is dirty")
+    assert(dirtyPop.error?.contains("clean working tree") == true, "Error message states clean tree required")
+
+    // Clean blocker and pop
+    _ = runGit(args: ["clean", "-fd"], in: repoURL.path)
+    let cleanPop = gitService.popStash(repoPath: repoURL.path, stashRef: "stash@{0}")
+    assert(cleanPop.success, "Pop succeeds when tree is clean")
+
+    let readRestored = try! fs.readFile(repoPath: repoURL.path, filePath: "code.txt")
+    assertEqual(readRestored, "version 2 (in progress)\n", "Stashed edits restored cleanly")
+}
+
+// Test 13: Worktree Listing and Management
+print("Test 13: Worktree Listing and Management")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fs = FileSystemService.shared
+    let gitService = GitService.shared
+
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "README.md", content: "# Main\n")
+    _ = runGit(args: ["add", "-A"], in: repoURL.path)
+    _ = runGit(args: ["commit", "-m", "init"], in: repoURL.path)
+
+    let worktrees = gitService.listWorktrees(repoPath: repoURL.path)
+    assertEqual(worktrees.count, 1, "One main worktree initially")
+    assert(worktrees.first?.isMain == true, "Is main worktree")
+
+    let wtPath = tempDir.appendingPathComponent("wt-feature").path
+    let addWtRes = gitService.addWorktree(repoPath: repoURL.path, worktreePath: wtPath, branch: nil, newBranch: "feat/worktree-test")
+    assert(addWtRes.success, "Add worktree should succeed: \(addWtRes.error ?? "")")
+
+    let updatedWts = gitService.listWorktrees(repoPath: repoURL.path)
+    assertEqual(updatedWts.count, 2, "Two worktrees after addition")
+
+    let rmRes = gitService.removeWorktree(repoPath: repoURL.path, worktreePath: wtPath, force: true)
+    assert(rmRes.success, "Remove worktree should succeed")
+
+    let finalWts = gitService.listWorktrees(repoPath: repoURL.path)
+    assertEqual(finalWts.count, 1, "Back to one worktree after removal")
+}
+
+// Test 14: Batch Git Operations and Notes Service
+print("Test 14: Batch Git Operations and Notes Service")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let gitService = GitService.shared
+
+    // Batch Git
+    let batchRes = gitService.batchGit(action: "fetch", repoPaths: [repoURL.path])
+    assertEqual(batchRes.totalCount, 1, "Total repos count is 1")
+    assertEqual(batchRes.action, "fetch", "Batch action is fetch")
+
+    // Notes Service
+    let tempNotesURL = tempDir.appendingPathComponent("test-notes.json")
+    let notesService = NotesService(customStorageURL: tempNotesURL)
+    assertEqual(notesService.getNote(for: repoURL.path), "", "Initial note is empty")
+
+    notesService.saveNote(for: repoURL.path, note: "Deployment checklist:\n1. run build\n2. check metrics")
+    let retrieved = notesService.getNote(for: repoURL.path)
+    assert(retrieved.contains("Deployment checklist"), "Retrieved saved note")
+
+    // Verify persistence from disk
+    let reloadedNotesService = NotesService(customStorageURL: tempNotesURL)
+    assertEqual(reloadedNotesService.getNote(for: repoURL.path), retrieved, "Reloaded note matches from disk")
+}
+
+print("==================================================")
+print("Complete Comprehensive Test Suite Finished: \(passedCount) passed, \(failedCount) failed")
+print("==================================================")
+
+if failedCount > 0 {
+    exit(1)
+}
