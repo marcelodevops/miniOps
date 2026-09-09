@@ -304,3 +304,101 @@ print("==================================================")
 if failedCount > 0 {
     exit(1)
 }
+
+// Test 9: End-to-End Workflow (Open -> Browse -> Edit -> Inspect Diff -> Commit Selected)
+print("Test 9: End-to-End Workflow (Open -> Browse -> Edit -> Inspect Diff -> Commit Selected)")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fs = FileSystemService.shared
+    let gitService = GitService.shared
+
+    // Create initial tree
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "src/main.swift", content: "print(\"hello world\")\n")
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "src/helper.swift", content: "func help() {}\n")
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "docs/readme.md", content: "# My Project\n")
+
+    // Commit initial state
+    _ = runGit(args: ["add", "-A"], in: repoURL.path)
+    _ = runGit(args: ["commit", "-m", "Initial commit"], in: repoURL.path)
+
+    // 1. Open / Scan repo
+    let (branch, isDirty, _, _, initialChanges) = gitService.getRepoStatus(repoPath: repoURL.path)
+    assertEqual(branch, "main", "Branch is main")
+    assertEqual(isDirty, false, "Initial working tree is clean")
+    assertEqual(initialChanges.count, 0, "No changes initially")
+
+    // 2. Browse tree
+    let tree = fs.buildFileTree(for: repoURL.path)
+    assert(tree.children != nil && !tree.children!.isEmpty, "File tree has children")
+    let srcDir = tree.children?.first(where: { $0.name == "src" })
+    assert(srcDir != nil, "Found src directory")
+    assert(srcDir?.isDirectory == true, "src is directory")
+
+    // 3. Select and edit file
+    var mainContent = try! fs.readFile(repoPath: repoURL.path, filePath: "src/main.swift")
+    assertEqual(mainContent, "print(\"hello world\")\n")
+
+    // Make an edit in src/main.swift and an unrelated change in docs/readme.md
+    mainContent += "print(\"new line added\")\n"
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "src/main.swift", content: mainContent)
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "docs/readme.md", content: "# My Project\nUpdated docs\n")
+
+    // 4. Inspect changes
+    let (_, isDirtyAfterEdit, _, _, changesAfterEdit) = gitService.getRepoStatus(repoPath: repoURL.path)
+    assert(isDirtyAfterEdit, "Repo is now dirty after edits")
+    assertEqual(changesAfterEdit.count, 2, "Two files changed")
+
+    // Inspect diff for src/main.swift
+    let diffMain = gitService.getDiff(repoPath: repoURL.path, filePath: "src/main.swift")
+    assert(diffMain.contains("+print(\"new line added\")"), "Diff contains added line")
+
+    // 5. Commit ONLY src/main.swift (selective commit)
+    let commitResult = gitService.selectiveCommit(
+        repoPath: repoURL.path,
+        message: "Update main.swift with new line",
+        selectedPaths: ["src/main.swift"]
+    )
+    assert(commitResult.success, "Selective commit must succeed")
+
+    // 6. Verify only src/main.swift was committed, while docs/readme.md remains modified
+    let (_, isDirtyAfterCommit, _, _, changesAfterCommit) = gitService.getRepoStatus(repoPath: repoURL.path)
+    assert(isDirtyAfterCommit, "Repo remains dirty because docs/readme.md was not committed")
+    assertEqual(changesAfterCommit.count, 1, "Exactly one file remains changed")
+    assertEqual(changesAfterCommit.first?.path, "docs/readme.md", "docs/readme.md remains uncommitted")
+
+    let lastCommitFiles = runGit(args: ["show", "--pretty=", "--name-only", "HEAD"], in: repoURL.path)
+    assertEqual(lastCommitFiles, "src/main.swift", "Last commit must ONLY contain src/main.swift")
+}
+
+// Test 10: Reconcile Partial Failure Handling
+print("Test 10: Reconcile Partial Failure Handling")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let fs = FileSystemService.shared
+    let gitService = GitService.shared
+
+    try! fs.writeFile(repoPath: repoURL.path, filePath: "feature.txt", content: "feature code\n")
+
+    // Set invalid remote to simulate push failure
+    _ = runGit(args: ["remote", "add", "origin", "git@invalid.example.com:nonexistent.git"], in: repoURL.path)
+
+    let reconcileResult = gitService.reconcile(repoPath: repoURL.path, message: "reconciling feature")
+    assert(!reconcileResult.success, "Reconcile with broken remote should fail push")
+    assert(reconcileResult.partialSuccess, "Must report partial success because commit was created locally")
+    assert(reconcileResult.error?.contains("commit created, but push failed") == true, "Error message must state 'commit created, but push failed'")
+
+    let lastCommitMsg = runGit(args: ["log", "-1", "--pretty=%s"], in: repoURL.path)
+    assertEqual(lastCommitMsg, "reconciling feature", "Commit was created locally despite push failure")
+}
+
+print("==================================================")
+print("All Extended Tests Completed: \(passedCount) passed, \(failedCount) failed")
+print("==================================================")
+
+if failedCount > 0 {
+    exit(1)
+}

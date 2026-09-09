@@ -52,7 +52,11 @@ public final class GitService: @unchecked Sendable {
             
             let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
             let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-            return (process.terminationStatus, stdout.trimmingCharacters(in: .whitespacesAndNewlines), stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+            var cleanStdout = stdout
+            while cleanStdout.hasSuffix("\n") || cleanStdout.hasSuffix("\r") {
+                cleanStdout.removeLast()
+            }
+            return (process.terminationStatus, cleanStdout, stderr.trimmingCharacters(in: .whitespacesAndNewlines))
         } catch {
             return (-1, "", error.localizedDescription)
         }
