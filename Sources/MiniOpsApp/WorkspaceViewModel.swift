@@ -61,7 +61,7 @@ public final class WorkspaceViewModel: ObservableObject {
         repositories = scanner.scan(rootPath: workspacePath)
 
         // If selected repo still exists, refresh it
-        if selectedRepo != nil {
+        if let current = selectedRepo {
             if let updated = repositories.first(where: { $0.path == current.path }) {
                 selectedRepo = updated
             }
@@ -79,7 +79,7 @@ public final class WorkspaceViewModel: ObservableObject {
 
     private func performSelectRepo(_ repo: RepoInfo) {
         // Save current repo's layout before switching
-        if selectedRepo != nil {
+        if let current = selectedRepo {
             saveCurrentRepoLayout()
         }
 
