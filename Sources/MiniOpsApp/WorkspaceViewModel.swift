@@ -25,6 +25,7 @@ public final class WorkspaceViewModel: ObservableObject {
     @Published public var selectedFilesForCommit: Set<String> = []
     @Published public var activeAgents: [AgentInfo] = []
     @Published public var tickets: [TicketInfo] = []
+    @Published public var graphData: GraphifyData? = nil
     private var previouslyNotifiedWaitingPIDs: Set<Int> = []
     private let agentScanner = AgentScanner.shared
 
@@ -65,6 +66,7 @@ public final class WorkspaceViewModel: ObservableObject {
         repositories = scanner.scan(rootPath: workspacePath)
         refreshAgents()
         refreshTickets()
+        refreshGraph()
 
         // If selected repo still exists, refresh it
         if let current = selectedRepo {
@@ -201,6 +203,10 @@ public final class WorkspaceViewModel: ObservableObject {
         if openPanel.runModal() == .OK, let url = openPanel.url {
             setWorkspace(path: url.path)
         }
+    }
+
+    public func refreshGraph() {
+        self.graphData = GraphifyScanner.shared.loadGraph(for: selectedRepo?.path, workspacePath: workspacePath)
     }
 
     public func refreshTickets() {

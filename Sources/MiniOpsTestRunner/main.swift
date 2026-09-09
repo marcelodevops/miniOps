@@ -656,3 +656,52 @@ print("==================================================")
 if failedCount > 0 {
     exit(1)
 }
+
+// Test 18: Knowledge Graph and Graphify Scanner
+print("Test 18: Knowledge Graph and Graphify Scanner")
+do {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let graphDir = tempDir.appendingPathComponent("graphify-out")
+    try! FileManager.default.createDirectory(at: graphDir, withIntermediateDirectories: true)
+
+    let graphJSON = """
+    {
+        "nodes": [
+            { "id": "A", "label": "GodService", "community": 1, "community_name": "Core", "file_type": "swift", "source_file": "Sources/Core.swift" },
+            { "id": "B", "label": "HelperOne", "community": 1, "community_name": "Core", "file_type": "swift" },
+            { "id": "C", "label": "HelperTwo", "community": 2, "community_name": "Utils", "file_type": "swift" },
+            { "id": "D", "label": "HelperThree", "community": 2, "community_name": "Utils", "file_type": "swift" }
+        ],
+        "links": [
+            { "source": "A", "target": "B", "relation": "calls" },
+            { "source": "A", "target": "C", "relation": "uses" },
+            { "source": "A", "target": "D", "relation": "owns" }
+        ]
+    }
+    """
+    try! graphJSON.write(to: graphDir.appendingPathComponent("graph.json"), atomically: true, encoding: .utf8)
+    try! "# Architecture Report\n".write(to: graphDir.appendingPathComponent("GRAPH_REPORT.md"), atomically: true, encoding: .utf8)
+
+    let scanner = GraphifyScanner.shared
+    let graphData = scanner.loadGraph(for: tempDir.path, workspacePath: tempDir.path)
+
+    assert(graphData != nil, "Graph data loaded successfully")
+    assertEqual(graphData?.nodes.count, 4, "Loaded 4 nodes")
+    assertEqual(graphData?.links.count, 3, "Loaded 3 links")
+    assertEqual(graphData?.communities.count, 2, "2 communities detected")
+    assert(graphData?.reportPath != nil, "GRAPH_REPORT.md detected")
+
+    let godNodes = scanner.computeGodNodes(data: graphData!, limit: 5)
+    assertEqual(godNodes.first?.node.id, "A", "Node A is ranked top god node")
+    assertEqual(godNodes.first?.degree, 3, "Node A has degree 3")
+}
+
+print("==================================================")
+print("Complete 100% Full Feature Test Suite: \(passedCount) passed, \(failedCount) failed")
+print("==================================================")
+
+if failedCount > 0 {
+    exit(1)
+}

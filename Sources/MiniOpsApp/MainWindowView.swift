@@ -9,6 +9,7 @@ public enum InspectorTab: String, CaseIterable {
     case notes = "Notes"
     case agents = "Agents"
     case tickets = "Tickets"
+    case graph = "Graph"
 }
 
 public struct MainWindowView: View {
@@ -160,6 +161,7 @@ public struct MainWindowView: View {
                                     Text("Notes").tag(InspectorTab.notes)
                                     Text("Agents (\(viewModel.activeAgents.count))").tag(InspectorTab.agents)
                                     Text("Tickets (\(viewModel.tickets.count))").tag(InspectorTab.tickets)
+                                    Text("Graph").tag(InspectorTab.graph)
                                 }
                                 .pickerStyle(.segmented)
                                 .frame(maxWidth: 420)
@@ -231,6 +233,16 @@ public struct MainWindowView: View {
                                     },
                                     onRefresh: {
                                         viewModel.refreshTickets()
+                                    }
+                                )
+                            case .graph:
+                                GraphifyVisualizerView(
+                                    graphData: viewModel.graphData,
+                                    onSelectFile: { filePath in
+                                        viewModel.selectFile(filePath)
+                                    },
+                                    onRefresh: {
+                                        viewModel.refreshGraph()
                                     }
                                 )
                             }

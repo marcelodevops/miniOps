@@ -219,3 +219,65 @@ public struct TicketInfo: Codable, Identifiable, Hashable, Sendable {
         self.notes = notes
     }
 }
+
+public struct GraphifyNode: Codable, Identifiable, Hashable, Sendable {
+    public let id: String
+    public let label: String
+    public let community: Int
+    public let communityName: String
+    public let fileType: String
+    public let sourceFile: String?
+    public let sourceLocation: String?
+
+    public init(
+        id: String,
+        label: String,
+        community: Int = 0,
+        communityName: String = "Default",
+        fileType: String = "unknown",
+        sourceFile: String? = nil,
+        sourceLocation: String? = nil
+    ) {
+        self.id = id
+        self.label = label
+        self.community = community
+        self.communityName = communityName
+        self.fileType = fileType
+        self.sourceFile = sourceFile
+        self.sourceLocation = sourceLocation
+    }
+}
+
+public struct GraphifyLink: Codable, Hashable, Sendable {
+    public let source: String
+    public let target: String
+    public let relation: String
+
+    public init(source: String, target: String, relation: String = "") {
+        self.source = source
+        self.target = target
+        self.relation = relation
+    }
+}
+
+public struct GraphifyData: Codable, Sendable {
+    public let nodes: [GraphifyNode]
+    public let links: [GraphifyLink]
+    public let communities: [Int]
+    public let reportPath: String?
+    public let htmlPath: String?
+
+    public init(
+        nodes: [GraphifyNode],
+        links: [GraphifyLink],
+        communities: [Int] = [],
+        reportPath: String? = nil,
+        htmlPath: String? = nil
+    ) {
+        self.nodes = nodes
+        self.links = links
+        self.communities = communities
+        self.reportPath = reportPath
+        self.htmlPath = htmlPath
+    }
+}
