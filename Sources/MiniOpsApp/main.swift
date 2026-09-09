@@ -1,5 +1,6 @@
-import SwiftUI
-import MiniOpsCore
-import SwiftTerm
+import Foundation
+import AppKit
 
-print("miniOps initializing...")
+print("Starting miniOps terminal prototype verification...")
+let ok = TerminalPrototype.verifyTerminalInstantiation()
+print("Verification result: \(ok ? "PASSED" : "FAILED")")
