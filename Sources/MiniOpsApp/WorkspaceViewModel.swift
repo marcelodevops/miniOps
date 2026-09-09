@@ -46,6 +46,7 @@ public final class WorkspaceViewModel: ObservableObject {
         } else if let firstRepo = repositories.first {
             selectRepo(firstRepo)
         }
+        setupNotificationListeners()
     }
 
     public func setWorkspace(path: String) {
@@ -60,7 +61,7 @@ public final class WorkspaceViewModel: ObservableObject {
         repositories = scanner.scan(rootPath: workspacePath)
 
         // If selected repo still exists, refresh it
-        if let current = selectedRepo {
+        if selectedRepo != nil {
             if let updated = repositories.first(where: { $0.path == current.path }) {
                 selectedRepo = updated
             }
@@ -78,7 +79,7 @@ public final class WorkspaceViewModel: ObservableObject {
 
     private func performSelectRepo(_ repo: RepoInfo) {
         // Save current repo's layout before switching
-        if let current = selectedRepo {
+        if selectedRepo != nil {
             saveCurrentRepoLayout()
         }
 
@@ -193,6 +194,42 @@ public final class WorkspaceViewModel: ObservableObject {
 
         if openPanel.runModal() == .OK, let url = openPanel.url {
             setWorkspace(path: url.path)
+        }
+    }
+
+    public func setupNotificationListeners() {
+        NotificationCenter.default.addObserver(forName: .miniOpsOpenWorkspace, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.chooseWorkspaceDirectory()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: .miniOpsSaveFile, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.saveCurrentFile()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: .miniOpsToggleGitInspector, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.isGitInspectorOpen.toggle()
+                self?.saveCurrentRepoLayout()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: .miniOpsRefreshGitStatus, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshCurrentRepoStatus()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: .miniOpsToggleTerminal, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.isTerminalCollapsed.toggle()
+                self?.saveCurrentRepoLayout()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: .miniOpsToggleEditor, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.isEditorCollapsed.toggle()
+                self?.saveCurrentRepoLayout()
+            }
         }
     }
 }

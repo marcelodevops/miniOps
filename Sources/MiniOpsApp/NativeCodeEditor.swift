@@ -139,7 +139,7 @@ public struct NativeCodeEditorView: NSViewRepresentable {
         }
     }
 
-    public class Coordinator: NSObject, NSTextViewDelegate {
+    @MainActor public class Coordinator: NSObject, NSTextViewDelegate {
         var parent: NativeCodeEditorView
         weak var textView: NativeTextView?
         var currentFilePath: String = ""
