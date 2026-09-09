@@ -10,13 +10,15 @@ public enum InspectorTab: String, CaseIterable {
 }
 
 public struct MainWindowView: View {
-    @StateObject private var viewModel = WorkspaceViewModel()
+    @ObservedObject public var viewModel: WorkspaceViewModel
     @State private var activeInspectorTab: InspectorTab = .changes
     @State private var isShowingBatchGitSheet: Bool = false
     @State private var isPerformingGitAction: Bool = false
     @State private var gitActionBanner: String?
 
-    public init() {}
+    public init(viewModel: WorkspaceViewModel) {
+        self.viewModel = viewModel
+    }
 
     public var body: some View {
         NavigationSplitView {

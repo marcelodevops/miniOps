@@ -547,3 +547,29 @@ print("==================================================")
 if failedCount > 0 {
     exit(1)
 }
+
+// Test 15: Workspace Status Summary for Menu Bar Extra
+print("Test 15: Workspace Status Summary for Menu Bar Extra")
+do {
+    let cleanSummary = WorkspaceStatusSummary(dirtyCount: 0, waitingAgentCount: 0)
+    assertEqual(cleanSummary.type, .clean, "Clean summary when 0 dirty and 0 waiting")
+    assertEqual(cleanSummary.title, "○", "Clean title is circle")
+
+    let dirtySummary = WorkspaceStatusSummary(dirtyCount: 3, waitingAgentCount: 0)
+    assertEqual(dirtySummary.type, .dirtyRepos(3), "Dirty repos status with count 3")
+    assertEqual(dirtySummary.title, "● 3", "Dirty title shows count 3")
+    assert(dirtySummary.tooltip.contains("3 repos with uncommitted changes"), "Tooltip mentions dirty count")
+
+    let agentSummary = WorkspaceStatusSummary(dirtyCount: 2, waitingAgentCount: 1)
+    assertEqual(agentSummary.type, .agentWaiting(1), "Agent waiting takes precedence over dirty repos")
+    assertEqual(agentSummary.title, "● 1", "Agent waiting shows count 1")
+    assert(agentSummary.tooltip.contains("1 agent waiting for input"), "Tooltip mentions agent waiting")
+}
+
+print("==================================================")
+print("Complete Full Suite Finished: \(passedCount) passed, \(failedCount) failed")
+print("==================================================")
+
+if failedCount > 0 {
+    exit(1)
+}

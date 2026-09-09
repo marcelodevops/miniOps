@@ -5,10 +5,11 @@ import MiniOpsCore
 @main
 struct MiniOpsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var sharedViewModel = WorkspaceViewModel()
 
     var body: some Scene {
         WindowGroup {
-            MainWindowView()
+            MainWindowView(viewModel: sharedViewModel)
                 .frame(minWidth: 900, minHeight: 600)
         }
         .windowStyle(.titleBar)
@@ -57,6 +58,19 @@ struct MiniOpsApp: App {
                 .keyboardShortcut("e", modifiers: .command)
             }
         }
+
+        MenuBarExtra {
+            MenuBarExtraView(viewModel: sharedViewModel)
+        } label: {
+            let dirtyCount = sharedViewModel.repositories.filter { $0.isDirty }.count
+            HStack(spacing: 3) {
+                Image(systemName: dirtyCount > 0 ? "circle.fill" : "checkmark.circle.fill")
+                if dirtyCount > 0 {
+                    Text("\(dirtyCount)")
+                }
+            }
+        }
+        .menuBarExtraStyle(.window)
     }
 }
 
@@ -73,9 +87,11 @@ extension Notification.Name {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        NotificationService.shared.requestAuthorization()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        // Keep running in menu bar even if window closed
+        false
     }
 }
