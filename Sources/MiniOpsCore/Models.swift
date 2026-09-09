@@ -105,3 +105,47 @@ public struct GitOperationResult: Sendable {
         self.partialSuccess = partialSuccess
     }
 }
+
+public struct GitStashItem: Codable, Identifiable, Hashable, Sendable {
+    public var id: String { ref }
+    public let ref: String
+    public let message: String
+    public let date: String
+
+    public init(ref: String, message: String, date: String = "") {
+        self.ref = ref
+        self.message = message
+        self.date = date
+    }
+}
+
+public struct GitWorktreeItem: Codable, Identifiable, Hashable, Sendable {
+    public var id: String { path }
+    public let path: String
+    public let head: String
+    public let branch: String
+    public let isMain: Bool
+
+    public init(path: String, head: String, branch: String, isMain: Bool) {
+        self.path = path
+        self.head = head
+        self.branch = branch
+        self.isMain = isMain
+    }
+}
+
+public struct BatchGitResult: Sendable {
+    public let action: String
+    public let results: [String: GitOperationResult]
+    public let totalCount: Int
+    public let successCount: Int
+    public let failureCount: Int
+
+    public init(action: String, results: [String: GitOperationResult]) {
+        self.action = action
+        self.results = results
+        self.totalCount = results.count
+        self.successCount = results.values.filter { $0.success }.count
+        self.failureCount = results.values.filter { !$0.success }.count
+    }
+}
