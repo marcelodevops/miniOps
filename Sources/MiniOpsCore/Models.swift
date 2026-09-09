@@ -187,3 +187,35 @@ public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
         self.command = command
     }
 }
+
+public struct TicketInfo: Codable, Identifiable, Hashable, Sendable {
+    public var id: String { key }
+    public let key: String
+    public let summary: String
+    public let status: String
+    public let statusCategory: String // "todo", "in_progress", "done"
+    public let priority: String // "High", "Medium", "Low", "None"
+    public let isOpen: Bool
+    public let localPath: String?
+    public var notes: String
+
+    public init(
+        key: String,
+        summary: String,
+        status: String = "To Do",
+        statusCategory: String = "todo",
+        priority: String = "Medium",
+        isOpen: Bool = true,
+        localPath: String? = nil,
+        notes: String = ""
+    ) {
+        self.key = key
+        self.summary = summary
+        self.status = status
+        self.statusCategory = statusCategory
+        self.priority = priority
+        self.isOpen = isOpen
+        self.localPath = localPath
+        self.notes = notes
+    }
+}

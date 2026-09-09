@@ -614,3 +614,45 @@ print("==================================================")
 if failedCount > 0 {
     exit(1)
 }
+
+// Test 17: Task / Ticket Scanning and Feature Branch Generation
+print("Test 17: Task / Ticket Scanning and Feature Branch Generation")
+do {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let ticketsDir = tempDir.appendingPathComponent("tickets")
+    try! FileManager.default.createDirectory(at: ticketsDir, withIntermediateDirectories: true)
+
+    let ticketFile = ticketsDir.appendingPathComponent("OPS-42-deploy.md")
+    let ticketBody = """
+    # Deploy to staging cluster
+    Status: In Progress
+    Priority: High
+
+    Details about the deployment steps.
+    """
+    try! ticketBody.write(to: ticketFile, atomically: true, encoding: .utf8)
+
+    let scanner = TicketScanner.shared
+    let tickets = scanner.scanTickets(workspacePath: tempDir.path)
+
+    assertEqual(tickets.count, 1, "One ticket scanned")
+    let ticket = tickets.first
+    assertEqual(ticket?.key, "OPS-42", "Key is OPS-42")
+    assertEqual(ticket?.summary, "Deploy to staging cluster", "Summary parsed from H1")
+    assertEqual(ticket?.status, "In Progress", "Status is In Progress")
+    assertEqual(ticket?.priority, "High", "Priority is High")
+    assertEqual(ticket?.isOpen, true, "Ticket is open")
+
+    let branchName = scanner.makeFeatureBranchName(ticket: ticket!)
+    assertEqual(branchName, "feat/OPS-42-deploy-to-staging-cluster", "Feature branch generated with slug")
+}
+
+print("==================================================")
+print("All Milestone 5 Tests Completed: \(passedCount) passed, \(failedCount) failed")
+print("==================================================")
+
+if failedCount > 0 {
+    exit(1)
+}

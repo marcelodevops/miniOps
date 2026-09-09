@@ -24,6 +24,7 @@ public final class WorkspaceViewModel: ObservableObject {
     // Git changes state
     @Published public var selectedFilesForCommit: Set<String> = []
     @Published public var activeAgents: [AgentInfo] = []
+    @Published public var tickets: [TicketInfo] = []
     private var previouslyNotifiedWaitingPIDs: Set<Int> = []
     private let agentScanner = AgentScanner.shared
 
@@ -63,6 +64,7 @@ public final class WorkspaceViewModel: ObservableObject {
         guard !workspacePath.isEmpty else { return }
         repositories = scanner.scan(rootPath: workspacePath)
         refreshAgents()
+        refreshTickets()
 
         // If selected repo still exists, refresh it
         if let current = selectedRepo {
@@ -199,6 +201,10 @@ public final class WorkspaceViewModel: ObservableObject {
         if openPanel.runModal() == .OK, let url = openPanel.url {
             setWorkspace(path: url.path)
         }
+    }
+
+    public func refreshTickets() {
+        self.tickets = TicketScanner.shared.scanTickets(workspacePath: workspacePath, repoPath: selectedRepo?.path)
     }
 
     public func refreshAgents() {

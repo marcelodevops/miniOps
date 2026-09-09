@@ -8,6 +8,7 @@ public enum InspectorTab: String, CaseIterable {
     case worktrees = "Worktrees"
     case notes = "Notes"
     case agents = "Agents"
+    case tickets = "Tickets"
 }
 
 public struct MainWindowView: View {
@@ -158,6 +159,7 @@ public struct MainWindowView: View {
                                     Text("Worktrees").tag(InspectorTab.worktrees)
                                     Text("Notes").tag(InspectorTab.notes)
                                     Text("Agents (\(viewModel.activeAgents.count))").tag(InspectorTab.agents)
+                                    Text("Tickets (\(viewModel.tickets.count))").tag(InspectorTab.tickets)
                                 }
                                 .pickerStyle(.segmented)
                                 .frame(maxWidth: 420)
@@ -218,6 +220,17 @@ public struct MainWindowView: View {
                                     },
                                     onRefresh: {
                                         viewModel.refreshAgents()
+                                    }
+                                )
+                            case .tickets:
+                                TicketManagerView(
+                                    repoPath: repo.path,
+                                    tickets: viewModel.tickets,
+                                    onBranchCreated: {
+                                        viewModel.refreshCurrentRepoStatus()
+                                    },
+                                    onRefresh: {
+                                        viewModel.refreshTickets()
                                     }
                                 )
                             }
