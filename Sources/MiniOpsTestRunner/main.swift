@@ -1056,6 +1056,75 @@ do {
     assertEqual(ahead, 0, "Nothing left to push after addCommitPush")
 }
 
+// Test 23: Credential Store and Integration Settings Persistence
+print("Test 23: Credential Store and Integration Settings Persistence")
+do {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // Non-secret integration settings round-trip through the state file.
+    let storeURL = tempDir.appendingPathComponent("state.json")
+    let store = WorkspaceStateStore(customStorageURL: storeURL)
+    assertEqual(store.getIntegrationSettings().jiraBaseURL, "", "Integration settings start empty")
+    assertEqual(store.getIntegrationSettings().herdrModeEnabled, false, "Herdr mode is off by default")
+
+    var settings = IntegrationSettings()
+    settings.jiraBaseURL = "https://example.atlassian.net"
+    settings.jiraEmail = "dev@example.com"
+    settings.githubUsername = "octocat"
+    store.saveIntegrationSettings(settings)
+    store.setHerdrModeEnabled(true)
+
+    let reloaded = WorkspaceStateStore(customStorageURL: storeURL)
+    assertEqual(reloaded.getIntegrationSettings().jiraBaseURL, "https://example.atlassian.net", "Jira site URL persisted")
+    assertEqual(reloaded.getIntegrationSettings().jiraEmail, "dev@example.com", "Jira email persisted")
+    assertEqual(reloaded.getIntegrationSettings().githubUsername, "octocat", "GitHub username persisted")
+    assertEqual(reloaded.getIntegrationSettings().herdrModeEnabled, true, "Herdr mode flag persisted")
+
+    // Secrets never reach the state file.
+    let stateContents = (try? String(contentsOf: storeURL, encoding: .utf8)) ?? ""
+    assert(!stateContents.contains("token"), "State file must not carry any token field")
+
+    // Older state files without the new key still decode.
+    let legacyURL = tempDir.appendingPathComponent("legacy.json")
+    try! #"{"repoStates":{},"hiddenRepoPaths":[],"customRepoPaths":[]}"#.write(to: legacyURL, atomically: true, encoding: .utf8)
+    let legacyStore = WorkspaceStateStore(customStorageURL: legacyURL)
+    assertEqual(legacyStore.getIntegrationSettings().herdrModeEnabled, false, "Legacy state decodes with default integration settings")
+
+    // Keychain-backed secrets, isolated under a test-only service name.
+    let credentials = CredentialStore(service: "com.miniops.credentials.tests.\(UUID().uuidString)")
+    assertEqual(credentials.hasSecret(for: .jira), false, "No Jira token stored initially")
+    assert(credentials.saveSecret("jira-secret-1234", for: .jira), "Jira token saved to the Keychain")
+    assertEqual(credentials.readSecret(for: .jira), "jira-secret-1234", "Jira token reads back")
+    assertEqual(credentials.maskedSecret(for: .jira), "••••••••1234", "Masked token exposes only the last four characters")
+
+    assert(credentials.saveSecret("jira-secret-5678", for: .jira), "Existing Jira token can be replaced")
+    assertEqual(credentials.readSecret(for: .jira), "jira-secret-5678", "Replaced Jira token reads back")
+
+    assert(credentials.saveSecret("ghp_token_abcd", for: .github), "GitHub token saved to the Keychain")
+    assertEqual(credentials.readSecret(for: .github), "ghp_token_abcd", "GitHub token is stored separately from Jira")
+
+    // Saving an empty secret clears it rather than storing a blank token.
+    assert(credentials.saveSecret("   ", for: .github), "Blank secret is accepted as a clear operation")
+    assertEqual(credentials.hasSecret(for: .github), false, "Blank secret removed the GitHub token")
+
+    assert(credentials.deleteSecret(for: .jira), "Jira token deleted")
+    assertEqual(credentials.readSecret(for: .jira), nil, "Deleted Jira token no longer readable")
+    assert(credentials.deleteSecret(for: .jira), "Deleting a missing token is not an error")
+
+    _ = credentials.deleteSecret(for: .github)
+}
+
+// Test 24: Herdr Mode Session Naming
+print("Test 24: Herdr Mode Session Naming")
+do {
+    assertEqual(HerdrService.sessionName(forRepoPath: "/Users/dev/repos/miniOps"), "miniOps", "Repository folder name becomes the session name")
+    assertEqual(HerdrService.sessionName(forRepoPath: "/Users/dev/repos/my repo.v2/"), "my-repo-v2", "Spaces and dots are replaced with dashes")
+    assertEqual(HerdrService.sessionName(forRepoPath: "~/repos/api_service"), "api_service", "Underscores and tildes are handled")
+    assertEqual(HerdrService.sessionName(forRepoPath: "/"), "miniops", "Unusable folder names fall back to a default session")
+}
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")
