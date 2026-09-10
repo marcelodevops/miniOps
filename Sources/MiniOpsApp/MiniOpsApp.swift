@@ -10,7 +10,13 @@ struct MiniOpsApp: App {
     var body: some Scene {
         WindowGroup {
             MainWindowView(viewModel: sharedViewModel)
-                .frame(minWidth: 900, minHeight: 600)
+                .frame(minWidth: 1000, minHeight: 680)
+                .onAppear {
+                    appDelegate.viewModel = sharedViewModel
+                    for window in NSApp.windows where window.canBecomeKey {
+                        window.delegate = appDelegate
+                    }
+                }
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
@@ -90,7 +96,17 @@ extension Notification.Name {
     static let miniOpsToggleEditor = Notification.Name("miniOpsToggleEditor")
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    weak var viewModel: WorkspaceViewModel?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        viewModel?.confirmLeavingEditor() == false ? .terminateCancel : .terminateNow
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        viewModel?.confirmLeavingEditor() ?? true
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NotificationService.shared.requestAuthorization()

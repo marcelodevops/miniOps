@@ -14,6 +14,7 @@ public enum InspectorTab: String, CaseIterable {
 
 public struct MainWindowView: View {
     @ObservedObject public var viewModel: WorkspaceViewModel
+    @State private var repositorySearch = ""
     @State private var activeInspectorTab: InspectorTab = .changes
     @State private var isShowingBatchGitSheet: Bool = false
     @State private var isPerformingGitAction: Bool = false
@@ -42,6 +43,9 @@ public struct MainWindowView: View {
                     .buttonStyle(.borderless)
                     .help("Change Workspace Directory")
 
+                    if viewModel.isScanning {
+                        ProgressView().controlSize(.small).help("Scanning repositories…")
+                    }
                     Button(action: { viewModel.refreshRepositories() }) {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 11))
@@ -73,15 +77,22 @@ public struct MainWindowView: View {
                     .padding(.top, 6)
                     .padding(.bottom, 2)
 
+                    TextField("Find a repository…", text: $repositorySearch)
+                        .textFieldStyle(.roundedBorder)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
                     RepoListView(
-                        repos: viewModel.repositories,
+                        repos: viewModel.repositories.filter {
+                            repositorySearch.isEmpty || $0.name.localizedCaseInsensitiveContains(repositorySearch)
+                                || ($0.groupName?.localizedCaseInsensitiveContains(repositorySearch) ?? false)
+                        },
                         selectedRepoPath: viewModel.selectedRepo?.path,
                         onSelectRepo: { repo in
                             viewModel.selectRepo(repo)
                         }
                     )
                 }
-                .frame(minHeight: 120, maxHeight: 220)
+                .frame(minHeight: 180, idealHeight: 280, maxHeight: 320)
 
                 Divider()
 
@@ -302,14 +313,6 @@ public struct MainWindowView: View {
             BatchGitSheetView(repos: viewModel.repositories, onComplete: {
                 viewModel.refreshRepositories()
             })
-        }
-        .alert("Unsaved Changes", isPresented: $viewModel.showUnsavedChangesAlert) {
-            Button("Cancel", role: .cancel) {}
-            Button("Discard Changes", role: .destructive) {
-                viewModel.discardUnsavedChangesAndProceed()
-            }
-        } message: {
-            Text("You have unsaved changes in the current file. Discard them to switch?")
         }
     }
 

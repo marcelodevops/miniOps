@@ -29,10 +29,9 @@ public final class WorkspaceViewModel: ObservableObject {
     private var previouslyNotifiedWaitingPIDs: Set<Int> = []
     private let agentScanner = AgentScanner.shared
 
-    // Alert for unsaved changes
-    @Published public var showUnsavedChangesAlert: Bool = false
-    private var pendingFileSwitchPath: String?
-    private var pendingRepoSwitch: RepoInfo?
+    @Published public var isScanning = false
+    private var scanGeneration = 0
+    private var loadedFileContent: String = ""
 
     private let scanner = WorkspaceScanner.shared
     private let gitService = GitService.shared
@@ -44,17 +43,16 @@ public final class WorkspaceViewModel: ObservableObject {
         let initialWorkspace = appState.lastWorkspacePath ?? "~/repos"
         setWorkspace(path: initialWorkspace)
 
-        // Restore last selected repo
-        if let lastRepoPath = appState.lastSelectedRepoPath,
-           let repo = repositories.first(where: { $0.path == lastRepoPath }) {
-            selectRepo(repo)
-        } else if let firstRepo = repositories.first {
-            selectRepo(firstRepo)
-        }
         setupNotificationListeners()
     }
 
     public func setWorkspace(path: String) {
+        guard confirmLeavingEditor() else { return }
+        if selectedRepo != nil { saveCurrentRepoLayout() }
+        selectedRepo = nil
+        selectedFilePath = nil
+        fileContent = ""
+        fileTree = nil
         let expanded = (path as NSString).expandingTildeInPath
         self.workspacePath = expanded
         stateStore.saveWorkspacePath(expanded)
@@ -63,26 +61,58 @@ public final class WorkspaceViewModel: ObservableObject {
 
     public func refreshRepositories() {
         guard !workspacePath.isEmpty else { return }
-        repositories = scanner.scan(rootPath: workspacePath)
-        refreshAgents()
-        refreshTickets()
-        refreshGraph()
-
-        // If selected repo still exists, refresh it
-        if let current = selectedRepo {
-            if let updated = repositories.first(where: { $0.path == current.path }) {
-                selectedRepo = updated
+        scanGeneration += 1
+        let generation = scanGeneration
+        let path = workspacePath
+        isScanning = true
+        DispatchQueue.global(qos: .userInitiated).async { [scanner] in
+            let repos = scanner.scan(rootPath: path)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.scanGeneration == generation else { return }
+                self.repositories = repos
+                self.isScanning = false
+                if let current = self.selectedRepo,
+                   let updated = repos.first(where: { $0.path == current.path }) {
+                    self.selectedRepo = updated
+                } else if self.selectedRepo == nil {
+                    let saved = self.stateStore.getAppState().lastSelectedRepoPath
+                    if let repo = repos.first(where: { $0.path == saved }) ?? repos.first {
+                        self.performSelectRepo(repo)
+                    }
+                }
+                self.refreshAgents()
+                self.refreshTickets()
+                self.refreshGraph()
             }
         }
     }
 
     public func selectRepo(_ repo: RepoInfo) {
-        if isEditorModified {
-            pendingRepoSwitch = repo
-            showUnsavedChangesAlert = true
-            return
-        }
+        guard repo.path != selectedRepo?.path, confirmLeavingEditor() else { return }
         performSelectRepo(repo)
+    }
+
+    public func confirmLeavingEditor() -> Bool {
+        guard isEditorModified else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Save changes before continuing?"
+        alert.informativeText = URL(fileURLWithPath: selectedFilePath ?? "file").lastPathComponent
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Discard Changes")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return saveCurrentFile()
+        case .alertThirdButtonReturn:
+            fileContent = loadedFileContent
+            isEditorModified = false
+            return true
+        default: return false
+        }
+    }
+
+    private func showFileError(_ error: Error) {
+        let alert = NSAlert(error: error)
+        alert.runModal()
     }
 
     private func performSelectRepo(_ repo: RepoInfo) {
@@ -114,15 +144,12 @@ public final class WorkspaceViewModel: ObservableObject {
 
         // Pre-select all modified files for commit by default
         selectedFilesForCommit = Set(repo.changedFiles.map { $0.path })
+        refreshGraph()
+        refreshTickets()
     }
 
     public func selectFile(_ path: String) {
-        if path == selectedFilePath { return }
-        if isEditorModified {
-            pendingFileSwitchPath = path
-            showUnsavedChangesAlert = true
-            return
-        }
+        guard path != selectedFilePath, confirmLeavingEditor() else { return }
         loadFile(filePath: path)
     }
 
@@ -132,32 +159,31 @@ public final class WorkspaceViewModel: ObservableObject {
             let content = try fileSystem.readFile(repoPath: repo.path, filePath: filePath)
             self.selectedFilePath = filePath
             self.fileContent = content
+            self.loadedFileContent = content
             self.isEditorModified = false
             saveCurrentRepoLayout()
         } catch {
-            print("Failed to read file \(filePath): \(error.localizedDescription)")
+            showFileError(error)
         }
     }
 
-    public func saveCurrentFile() {
-        guard let repo = selectedRepo, let filePath = selectedFilePath else { return }
+    @discardableResult
+    public func saveCurrentFile() -> Bool {
+        guard let repo = selectedRepo, let filePath = selectedFilePath else { return false }
         do {
+            let current = try fileSystem.readFile(repoPath: repo.path, filePath: filePath)
+            guard current == loadedFileContent else {
+                throw NSError(domain: "miniOps", code: 409, userInfo: [NSLocalizedDescriptionKey:
+                    "This file changed on disk. Your edits are still open; copy them before reopening the file to avoid overwriting external changes."])
+            }
             try fileSystem.writeFile(repoPath: repo.path, filePath: filePath, content: fileContent)
-            self.isEditorModified = false
+            loadedFileContent = fileContent
+            isEditorModified = false
             refreshCurrentRepoStatus()
+            return true
         } catch {
-            print("Failed to save file \(filePath): \(error.localizedDescription)")
-        }
-    }
-
-    public func discardUnsavedChangesAndProceed() {
-        isEditorModified = false
-        if let nextRepo = pendingRepoSwitch {
-            pendingRepoSwitch = nil
-            performSelectRepo(nextRepo)
-        } else if let nextFile = pendingFileSwitchPath {
-            pendingFileSwitchPath = nil
-            loadFile(filePath: nextFile)
+            showFileError(error)
+            return false
         }
     }
 
@@ -175,20 +201,17 @@ public final class WorkspaceViewModel: ObservableObject {
 
     public func refreshCurrentRepoStatus() {
         guard let repo = selectedRepo else { return }
-        let (branch, isDirty, ahead, behind, changes) = gitService.getRepoStatus(repoPath: repo.path)
-        let updated = RepoInfo(
-            name: repo.name,
-            path: repo.path,
-            groupName: repo.groupName,
-            branch: branch,
-            isDirty: isDirty,
-            ahead: ahead,
-            behind: behind,
-            changedFiles: changes
-        )
-        self.selectedRepo = updated
-        if let idx = repositories.firstIndex(where: { $0.path == repo.path }) {
-            repositories[idx] = updated
+        DispatchQueue.global(qos: .userInitiated).async { [gitService] in
+            let (branch, isDirty, ahead, behind, changes) = gitService.getRepoStatus(repoPath: repo.path)
+            let updated = RepoInfo(name: repo.name, path: repo.path, groupName: repo.groupName,
+                                   branch: branch, isDirty: isDirty, ahead: ahead, behind: behind, changedFiles: changes)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if self.selectedRepo?.path == repo.path { self.selectedRepo = updated }
+                if let idx = self.repositories.firstIndex(where: { $0.path == repo.path }) {
+                    self.repositories[idx] = updated
+                }
+            }
         }
     }
 
@@ -214,21 +237,22 @@ public final class WorkspaceViewModel: ObservableObject {
     }
 
     public func refreshAgents() {
-        let agents = agentScanner.scanAgents(repositories: repositories)
-        self.activeAgents = agents
-
-        for agent in agents where agent.isWaitingForInput {
-            if !previouslyNotifiedWaitingPIDs.contains(agent.pid) {
-                previouslyNotifiedWaitingPIDs.insert(agent.pid)
-                NotificationService.shared.sendNotification(
-                    title: "\(agent.tool) Needs Attention",
-                    body: "Waiting for input in \(agent.repoName ?? "terminal")"
-                )
+        let repos = repositories
+        DispatchQueue.global(qos: .utility).async { [agentScanner] in
+            let agents = agentScanner.scanAgents(repositories: repos)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.activeAgents = agents
+                for agent in agents where agent.isWaitingForInput {
+                    if !self.previouslyNotifiedWaitingPIDs.contains(agent.pid) {
+                        NotificationService.shared.sendNotification(
+                            title: "\(agent.tool) May Need Attention",
+                            body: "Appears idle in \(agent.repoName ?? "terminal")")
+                    }
+                }
+                self.previouslyNotifiedWaitingPIDs = Set(agents.filter { $0.isWaitingForInput }.map { $0.pid })
             }
         }
-
-        let currentPIDs = Set(agents.map { $0.pid })
-        previouslyNotifiedWaitingPIDs = previouslyNotifiedWaitingPIDs.intersection(currentPIDs)
     }
 
     public func setupNotificationListeners() {
