@@ -151,7 +151,7 @@ public struct BatchGitResult: Sendable {
 }
 
 public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
-    public var id: Int { pid }
+    public var id: String { herdrPaneId ?? "\(pid)" }
     public let pid: Int
     public let tool: String
     public let status: String // "waiting" or "running"
@@ -162,6 +162,11 @@ public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
     public let repoName: String?
     public let repoPath: String?
     public let command: String
+    public let herdrPaneId: String?
+    public let herdrWorkspaceId: String?
+    public let herdrStatus: String?
+    public let herdrTerminalTitle: String?
+    public let isHerdrManaged: Bool
 
     public init(
         pid: Int,
@@ -173,7 +178,12 @@ public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
         tty: String = "",
         repoName: String? = nil,
         repoPath: String? = nil,
-        command: String = ""
+        command: String = "",
+        herdrPaneId: String? = nil,
+        herdrWorkspaceId: String? = nil,
+        herdrStatus: String? = nil,
+        herdrTerminalTitle: String? = nil,
+        isHerdrManaged: Bool = false
     ) {
         self.pid = pid
         self.tool = tool
@@ -185,6 +195,35 @@ public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
         self.repoName = repoName
         self.repoPath = repoPath
         self.command = command
+        self.herdrPaneId = herdrPaneId
+        self.herdrWorkspaceId = herdrWorkspaceId
+        self.herdrStatus = herdrStatus
+        self.herdrTerminalTitle = herdrTerminalTitle
+        self.isHerdrManaged = isHerdrManaged
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case pid, tool, status, isWaitingForInput, elapsed, cpu, tty, repoName, repoPath, command
+        case herdrPaneId, herdrWorkspaceId, herdrStatus, herdrTerminalTitle, isHerdrManaged
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.pid = try container.decode(Int.self, forKey: .pid)
+        self.tool = try container.decode(String.self, forKey: .tool)
+        self.status = try container.decode(String.self, forKey: .status)
+        self.isWaitingForInput = try container.decode(Bool.self, forKey: .isWaitingForInput)
+        self.elapsed = try container.decode(String.self, forKey: .elapsed)
+        self.cpu = try container.decodeIfPresent(Double.self, forKey: .cpu) ?? 0.0
+        self.tty = try container.decodeIfPresent(String.self, forKey: .tty) ?? ""
+        self.repoName = try container.decodeIfPresent(String.self, forKey: .repoName)
+        self.repoPath = try container.decodeIfPresent(String.self, forKey: .repoPath)
+        self.command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
+        self.herdrPaneId = try container.decodeIfPresent(String.self, forKey: .herdrPaneId)
+        self.herdrWorkspaceId = try container.decodeIfPresent(String.self, forKey: .herdrWorkspaceId)
+        self.herdrStatus = try container.decodeIfPresent(String.self, forKey: .herdrStatus)
+        self.herdrTerminalTitle = try container.decodeIfPresent(String.self, forKey: .herdrTerminalTitle)
+        self.isHerdrManaged = try container.decodeIfPresent(Bool.self, forKey: .isHerdrManaged) ?? false
     }
 }
 
