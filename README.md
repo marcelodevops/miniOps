@@ -72,12 +72,19 @@ miniOps is structured into cleanly isolated layers:
 * **Clone by URL / Shorthand**: Clone any repository by full URL or `owner/name` shorthand into your workspace with destination validation.
 * **Create & Clone Remote Repository**: Create new public or private GitHub repositories (with description and initial README) and immediately clone and checkout in the workspace.
 
+### 11. Repository Hiding & Settings (`Cmd+,`)
+* **Context Menu Actions**: Right-click any repository in the sidebar list to hide it from view, copy its path, or reveal it in Finder.
+* **Hidden Repositories Management**: View all hidden repositories in the Settings panel with disk presence checks.
+* **Show / Unhide**: Restore any hidden repository back to the active sidebar list with a single click or unhide all at once.
+* **Re-import from Disk**: Import or re-import any Git repository folder directly into miniOps with automatic path normalization and git validation.
+
 ---
 
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
 | :--- | :--- |
+| `Cmd + ,` | Open Settings (General, Hidden Repos, Re-import) |
 | `Cmd + E` | Toggle Code Editor Pane |
 | `Cmd + J` | Toggle Embedded Terminal Pane |
 | `Cmd + S` | Save Current File in Editor |
