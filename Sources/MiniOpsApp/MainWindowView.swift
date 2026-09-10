@@ -59,6 +59,13 @@ public struct MainWindowView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Rescan Repositories")
+
+                    Button(action: { viewModel.isShowingSettingsSheet = true }) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Settings (Cmd+,)")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -334,6 +341,12 @@ public struct MainWindowView: View {
                 onDismiss: {
                     viewModel.isShowingCloneSheet = false
                 }
+            )
+        }
+        .sheet(isPresented: $viewModel.isShowingSettingsSheet) {
+            SettingsSheetContainer(
+                viewModel: viewModel,
+                isPresented: $viewModel.isShowingSettingsSheet
             )
         }
     }
