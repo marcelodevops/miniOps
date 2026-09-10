@@ -88,12 +88,14 @@ public struct NativeCodeEditorView: NSViewRepresentable {
     @Binding public var isModified: Bool
     public var filePath: String
     public var onSave: () -> Void
+    public var searchRequest: Int
 
-    public init(text: Binding<String>, isModified: Binding<Bool>, filePath: String, onSave: @escaping () -> Void) {
+    public init(text: Binding<String>, isModified: Binding<Bool>, filePath: String, onSave: @escaping () -> Void, searchRequest: Int = 0) {
         self._text = text
         self._isModified = isModified
         self.filePath = filePath
         self.onSave = onSave
+        self.searchRequest = searchRequest
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -144,6 +146,13 @@ public struct NativeCodeEditorView: NSViewRepresentable {
     public func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NativeTextView else { return }
         context.coordinator.parent = self
+        if context.coordinator.searchRequest != searchRequest {
+            context.coordinator.searchRequest = searchRequest
+            textView.window?.makeFirstResponder(textView)
+            let item = NSMenuItem()
+            item.tag = NSTextFinder.Action.showFindInterface.rawValue
+            textView.performTextFinderAction(item)
+        }
         textView.onSave = onSave
         if context.coordinator.currentFilePath != filePath || textView.string != text {
             context.coordinator.updateText(text, filePath: filePath)
@@ -154,6 +163,7 @@ public struct NativeCodeEditorView: NSViewRepresentable {
         var parent: NativeCodeEditorView
         weak var textView: NativeTextView?
         var currentFilePath: String = ""
+        var searchRequest = 0
         var isUpdatingInternally: Bool = false
 
         init(_ parent: NativeCodeEditorView) {
@@ -200,6 +210,7 @@ public struct EditorContainerView: View {
     @Binding public var isModified: Bool
     public var filePath: String
     public var onSave: () -> Void
+    @State private var searchRequest = 0
 
     public init(text: Binding<String>, isModified: Binding<Bool>, filePath: String, onSave: @escaping () -> Void) {
         self._text = text
@@ -226,9 +237,7 @@ public struct EditorContainerView: View {
 
                 // Find button
                 Button(action: {
-                    let item = NSMenuItem()
-                    item.tag = NSTextFinder.Action.showFindInterface.rawValue
-                    NSApp.sendAction(#selector(NSTextView.performTextFinderAction(_:)), to: nil, from: item)
+                    searchRequest += 1
                 }) {
                     Image(systemName: "magnifyingglass")
                 }
@@ -256,7 +265,8 @@ public struct EditorContainerView: View {
                 text: $text,
                 isModified: $isModified,
                 filePath: filePath,
-                onSave: onSave
+                onSave: onSave,
+                searchRequest: searchRequest
             )
         }
     }

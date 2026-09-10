@@ -8,3 +8,5 @@ DerivedData/
 .swiftpm/
 dist/
 *.dmg
+graphify-out/
+.graphify/

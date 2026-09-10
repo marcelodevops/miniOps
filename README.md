@@ -2,7 +2,7 @@
 
 **miniOps** is a genuinely native macOS workspace and repository manager built with SwiftUI, AppKit, and SwiftTerm.
 
-Inspired by [Ghostty](https://ghostty.org)'s approach to deep platform integration, miniOps is designed for developers who demand instant startup, zero-latency interactions, and true macOS system integration—with **zero WebViews, zero Electron, zero Tauri, and zero browser-based terminals**.
+Inspired by [Ghostty](https://ghostty.org)'s approach to deep platform integration, miniOps is designed for developers who demand responsive interaction and native macOS system integration—with **zero WebViews, zero Electron, zero Tauri, and zero browser-based terminals**.
 
 ---
 
@@ -25,8 +25,8 @@ miniOps is structured into cleanly isolated layers:
 * **Native File Tree**: Hierarchical repository browser with file status badges and quick opening.
 
 ### 2. Native Code Editor
-* **AppKit `NSTextView`**: Lightweight, responsive native text editor with line numbers, search and replace, and syntax styling.
-* **Safety Guards**: Detects unsaved modifications with confirmation prompts before closing or switching files.
+* **AppKit `NSTextView`**: Lightweight, responsive native text editor with native find/replace, undo, and syntax styling.
+* **Safety Guards**: Detects unsaved modifications with confirmation prompts before quitting, closing, changing workspaces, or switching files; refuses saves when the file has changed on disk.
 
 ### 3. Native Embedded Terminal
 * **High-Performance PTY**: Powered by SwiftTerm with true VT100/Xterm emulation.
@@ -142,3 +142,11 @@ Install the application directly to `/Applications/miniOps.app`:
 ## License
 
 Internal Developer Tool. All rights reserved.
+
+## Current iteration
+
+Repository scanning and agent discovery run off the main UI thread. The sidebar includes a repository filter, and the editor uses the macOS Find bar (Command-F) for highlighting, next/previous matches, and replacement.
+
+Reconcile in the changes panel requires a nonempty file selection. Git status preserves Unicode, whitespace, and newline filenames. Editor paths are checked against resolved repository boundaries, including symlinks.
+
+Remaining work includes enforcing Git subprocess deadlines, editor line numbers, and more complete UI automation. Long-running Git actions retain their repository lock; there is no unsafe force-unlock mechanism.
