@@ -357,6 +357,61 @@ public final class WorkspaceViewModel: ObservableObject {
         }
     }
 
+    /// Opens a ticket's local markdown file in the editor when it lives inside the selected repository.
+    public func openTicket(_ ticket: TicketInfo) {
+        guard let localPath = ticket.localPath else {
+            presentAlert(title: "No Local File", message: "\(ticket.key) has no local file to open.")
+            return
+        }
+        guard let repo = selectedRepo else {
+            presentAlert(title: "No Repository Selected", message: "Select a repository before opening a ticket file.")
+            return
+        }
+
+        guard let relativePath = TicketScanner.shared.repoRelativePath(forTicketPath: localPath, repoPath: repo.path) else {
+            presentAlert(
+                title: "Ticket Outside Repository",
+                message: "\(ticket.key) is stored outside \(repo.name) and cannot be opened here."
+            )
+            return
+        }
+
+        selectFile(relativePath)
+    }
+
+    public func createBranchForTicket(_ ticket: TicketInfo) {
+        guard let repo = selectedRepo else {
+            presentAlert(title: "No Repository Selected", message: "Select a repository before creating a feature branch.")
+            return
+        }
+
+        let branchName = TicketScanner.shared.makeFeatureBranchName(ticket: ticket)
+        let repoPath = repo.path
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = GitService.shared.createBranch(repoPath: repoPath, branchName: branchName)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if result.success {
+                    self.refreshCurrentRepoStatus()
+                } else {
+                    self.presentAlert(
+                        title: "Could Not Create Branch",
+                        message: result.error ?? "Failed to create \(branchName)."
+                    )
+                }
+            }
+        }
+    }
+
+    private func presentAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     public func unhideRepo(path: String) {
         stateStore.unhideRepo(path: path)
         hiddenRepoPaths.remove(path)
