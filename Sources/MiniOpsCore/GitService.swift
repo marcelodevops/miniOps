@@ -231,6 +231,54 @@ public final class GitService: @unchecked Sendable {
         }
     }
 
+    /// Stage every change, commit it with a custom message and push the current branch in one step.
+    /// Mirrors the `xgit` shell workflow: `git add -A` + `git commit -m` + `git push` (with upstream set on first push).
+    public func addCommitPush(repoPath: String, message: String) -> GitOperationResult {
+        let trimmedMsg = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMsg.isEmpty else {
+            return GitOperationResult(success: false, error: "Commit message cannot be empty")
+        }
+        guard trimmedMsg.count <= 2000 else {
+            return GitOperationResult(success: false, error: "Commit message too long (max 2000 characters)")
+        }
+
+        do {
+            return try lockManager.withRepoLock(repoPath: repoPath, action: "addCommitPush") {
+                let addRes = runGit(args: ["add", "-A"], in: repoPath)
+                if addRes.status != 0 {
+                    let err = addRes.stderr.isEmpty ? addRes.stdout : addRes.stderr
+                    return GitOperationResult(success: false, error: "Git add -A failed: \(err)")
+                }
+
+                // Same guard as `git diff --cached --quiet` in xgit: exit 0 means nothing is staged.
+                let stagedRes = runGit(args: ["diff", "--cached", "--quiet"], in: repoPath)
+                if stagedRes.status == 0 {
+                    return GitOperationResult(success: false, error: "Nothing to commit")
+                }
+
+                let commitRes = runGit(args: ["commit", "-m", trimmedMsg], in: repoPath)
+                if commitRes.status != 0 {
+                    let err = commitRes.stderr.isEmpty ? commitRes.stdout : commitRes.stderr
+                    return GitOperationResult(success: false, error: "Git commit failed: \(err)")
+                }
+
+                let pushRes = push(repoPath: repoPath)
+                if !pushRes.success {
+                    return GitOperationResult(
+                        success: false,
+                        output: "Commit created locally",
+                        error: "commit created, but push failed: \(pushRes.error ?? "unknown error")",
+                        partialSuccess: true
+                    )
+                }
+
+                return GitOperationResult(success: true, output: "Committed and pushed: \(trimmedMsg)")
+            }
+        } catch {
+            return GitOperationResult(success: false, error: error.localizedDescription)
+        }
+    }
+
     public func reconcile(repoPath: String, message: String = "reconciling latest changes", selectedPaths: [String]? = nil) -> GitOperationResult {
         if let selectedPaths, selectedPaths.isEmpty {
             return GitOperationResult(success: false, error: "No files selected to reconcile")
