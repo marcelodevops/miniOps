@@ -54,9 +54,9 @@ miniOps is structured into cleanly isolated layers:
 * **Native Notifications**: Real-time alerts dispatched via `UNUserNotificationCenter`.
 
 ### 7. Autonomous Agent Detection & Attention Queue (`Cmd+Shift+A`)
-* **Process Scanner**: Discovers background AI coding agent CLIs including Claude Code, OpenAI Codex, Aider, Antigravity, and OpenClaw via process table inspection (`ps -axo`).
-* **Working Directory Resolution**: Correlates process working directories using `lsof -a -d cwd -p <pid> -Fn`.
-* **Attention Queue**: Heuristically detects when an agent is sleeping on a TTY waiting for user input and dispatches a notification with a jump-to-repo action.
+* **Process & Herdr Scanner**: Discovers background AI coding agent CLIs including Claude Code, OpenAI Codex, Aider, Antigravity, and OpenClaw via process inspection (`ps -axo`) and live Herdr socket API.
+* **Working Directory Resolution**: Correlates process working directories using `lsof -a -d cwd -p <pid> -Fn` and Herdr pane `cwd` / `foreground_cwd`.
+* **Attention Queue**: Real-time detection when an agent is blocked waiting for interactive approval or input; dispatches notifications and highlights attention badge in the menu bar.
 
 ### 8. Task & Ticket Tracking (`Cmd+Shift+T`)
 * **Ticket Scanner**: Ingests local markdown tickets (`tickets/*.md`) and `jira-cache.json`.
@@ -77,6 +77,13 @@ miniOps is structured into cleanly isolated layers:
 * **Hidden Repositories Management**: View all hidden repositories in the Settings panel with disk presence checks.
 * **Show / Unhide**: Restore any hidden repository back to the active sidebar list with a single click or unhide all at once.
 * **Re-import from Disk**: Import or re-import any Git repository folder directly into miniOps with automatic path normalization and git validation.
+
+### 12. Herdr Terminal Workspace Manager Integration
+* **Live Socket API**: Communicates directly with `~/.config/herdr/herdr.sock` to detect agents across persistent terminal sessions and workspaces.
+* **Accurate Lifecycle States**: Reflects exact Herdr states (`working`, `idle`, `blocked` at user prompt, `done`).
+* **Jump in Terminal**: One-click focus (`herdr workspace focus`, `herdr agent focus`) brings your terminal/Ghostty window to the active pane.
+* **Live Terminal Buffer Inspection**: Inspect real-time terminal output snapshots directly inside miniOps without switching windows.
+* **Hook Installer in Settings**: Manage and install Herdr lifecycle hooks for Antigravity, Claude Code, Codex, Copilot, and other supported tools.
 
 ---
 
