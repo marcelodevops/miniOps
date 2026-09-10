@@ -19,6 +19,10 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BIN_PATH" "$MACOS_DIR/miniOps"
 chmod +x "$MACOS_DIR/miniOps"
 
+if [ -f "$REPO_ROOT/Resources/AppIcon.icns" ]; then
+    cp "$REPO_ROOT/Resources/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+fi
+
 cat << 'PLIST' > "$CONTENTS_DIR/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -32,6 +36,8 @@ cat << 'PLIST' > "$CONTENTS_DIR/Info.plist"
     <string>miniOps</string>
     <key>CFBundleDisplayName</key>
     <string>miniOps Dev</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
