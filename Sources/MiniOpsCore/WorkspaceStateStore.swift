@@ -83,22 +83,25 @@ public final class WorkspaceStateStore: @unchecked Sendable {
     }
 
     public func saveWorkspacePath(_ path: String) {
+        let stdPath = standardize(path)
         queue.sync {
-            cachedState.lastWorkspacePath = path
+            cachedState.lastWorkspacePath = stdPath
             persistToDisk()
         }
     }
 
     public func hideRepo(path: String) {
+        let stdPath = standardize(path)
         queue.sync {
-            cachedState.hiddenRepoPaths.insert(path)
+            cachedState.hiddenRepoPaths.insert(stdPath)
             persistToDisk()
         }
     }
 
     public func unhideRepo(path: String) {
+        let stdPath = standardize(path)
         queue.sync {
-            cachedState.hiddenRepoPaths.remove(path)
+            cachedState.hiddenRepoPaths.remove(stdPath)
             persistToDisk()
         }
     }
@@ -115,22 +118,28 @@ public final class WorkspaceStateStore: @unchecked Sendable {
     }
 
     public func addCustomRepo(path: String) {
+        let stdPath = standardize(path)
         queue.sync {
-            cachedState.customRepoPaths.insert(path)
-            cachedState.hiddenRepoPaths.remove(path)
+            cachedState.customRepoPaths.insert(stdPath)
+            cachedState.hiddenRepoPaths.remove(stdPath)
             persistToDisk()
         }
     }
 
     public func removeCustomRepo(path: String) {
+        let stdPath = standardize(path)
         queue.sync {
-            cachedState.customRepoPaths.remove(path)
+            cachedState.customRepoPaths.remove(stdPath)
             persistToDisk()
         }
     }
 
     public func getCustomRepoPaths() -> Set<String> {
         queue.sync { cachedState.customRepoPaths }
+    }
+
+    private func standardize(_ path: String) -> String {
+        URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardized.path
     }
 
     private func persistToDisk() {

@@ -13,7 +13,7 @@ public final class WorkspaceScanner: @unchecked Sendable {
     }
 
     public func scan(rootPath: String, customPaths: Set<String> = []) -> [RepoInfo] {
-        let rootURL = URL(fileURLWithPath: (rootPath as NSString).expandingTildeInPath).standardized
+        let rootURL = URL(fileURLWithPath: (rootPath as NSString).expandingTildeInPath).resolvingSymlinksInPath()
         let items = (try? FileManager.default.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
 
         var repos: [RepoInfo] = []
@@ -56,7 +56,7 @@ public final class WorkspaceScanner: @unchecked Sendable {
 
         // Add any custom imported paths that aren't already included
         for customPath in customPaths.sorted() {
-            let expanded = (customPath as NSString).expandingTildeInPath
+            let expanded = URL(fileURLWithPath: (customPath as NSString).expandingTildeInPath).resolvingSymlinksInPath().path
             if !repos.contains(where: { $0.path == expanded }) {
                 if let customRepo = inspectRepo(path: expanded, group: "Imported") {
                     repos.append(customRepo)
@@ -68,7 +68,7 @@ public final class WorkspaceScanner: @unchecked Sendable {
     }
 
     public func inspectRepo(path: String, group: String? = nil) -> RepoInfo? {
-        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardized
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).resolvingSymlinksInPath()
         let gitURL = url.appendingPathComponent(".git")
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: gitURL.path, isDirectory: &isDir) else {
@@ -78,10 +78,11 @@ public final class WorkspaceScanner: @unchecked Sendable {
     }
 
     private func makeRepoRecord(url: URL, group: String?) -> RepoInfo {
-        let (branch, isDirty, ahead, behind, changes) = gitService.getRepoStatus(repoPath: url.path)
+        let resolved = url.resolvingSymlinksInPath()
+        let (branch, isDirty, ahead, behind, changes) = gitService.getRepoStatus(repoPath: resolved.path)
         return RepoInfo(
-            name: url.lastPathComponent,
-            path: url.path,
+            name: resolved.lastPathComponent,
+            path: resolved.path,
             groupName: group,
             branch: branch,
             isDirty: isDirty,
