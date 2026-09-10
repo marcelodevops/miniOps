@@ -112,4 +112,29 @@ public final class TicketScanner: @unchecked Sendable {
         }
         return "feat/\(cleanKey)-\(slug)"
     }
+
+    /// Filters tickets for the navigator: optionally hides closed tickets and matches
+    /// the query against the ticket key or summary.
+    public func filter(tickets: [TicketInfo], searchText: String = "", openOnly: Bool = true) -> [TicketInfo] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return tickets.filter { ticket in
+            if openOnly && !ticket.isOpen { return false }
+            if query.isEmpty { return true }
+            return ticket.key.localizedCaseInsensitiveContains(query)
+                || ticket.summary.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    /// Converts a ticket's absolute local file path into a path relative to `repoPath`.
+    /// Returns nil when the ticket file lives outside the repository, so a ticket stored
+    /// in the workspace root can never be opened as if it belonged to the selected repo.
+    public func repoRelativePath(forTicketPath ticketPath: String, repoPath: String) -> String? {
+        let repoRoot = URL(fileURLWithPath: (repoPath as NSString).expandingTildeInPath).standardized.path
+        let filePath = URL(fileURLWithPath: (ticketPath as NSString).expandingTildeInPath).standardized.path
+        let prefix = repoRoot.hasSuffix("/") ? repoRoot : repoRoot + "/"
+
+        guard filePath.hasPrefix(prefix) else { return nil }
+        let relative = String(filePath.dropFirst(prefix.count))
+        return relative.isEmpty ? nil : relative
+    }
 }
