@@ -23,22 +23,20 @@ public struct FileNavigatorView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2) {
-                if let children = rootNode.children {
-                    ForEach(children) { child in
-                        FileNodeRow(
-                            node: child,
-                            depth: 0,
-                            selectedFilePath: selectedFilePath,
-                            expandedFolderPaths: $expandedFolderPaths,
-                            onSelectFile: onSelectFile
-                        )
-                    }
+        VStack(alignment: .leading, spacing: 2) {
+            if let children = rootNode.children {
+                ForEach(children) { child in
+                    FileNodeRow(
+                        node: child,
+                        depth: 0,
+                        selectedFilePath: selectedFilePath,
+                        expandedFolderPaths: $expandedFolderPaths,
+                        onSelectFile: onSelectFile
+                    )
                 }
             }
-            .padding(.vertical, 4)
         }
+        .padding(.vertical, 4)
     }
 }
 

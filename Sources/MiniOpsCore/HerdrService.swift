@@ -92,6 +92,18 @@ public struct HerdrIntegrationInfo: Identifiable, Hashable, Sendable {
     }
 }
 
+public struct HerdrWorkspaceResult: Sendable {
+    public let success: Bool
+    public let workspaceID: String?
+    public let message: String
+
+    public init(success: Bool, workspaceID: String? = nil, message: String) {
+        self.success = success
+        self.workspaceID = workspaceID
+        self.message = message
+    }
+}
+
 public final class HerdrService: @unchecked Sendable {
     public static let shared = HerdrService()
 
@@ -161,6 +173,39 @@ public final class HerdrService: @unchecked Sendable {
             version: parsed.version,
             socketPath: parsed.socketPath ?? (socketExists ? defaultSocketPath : nil),
             executablePath: exe
+        )
+    }
+
+    public func createWorkspace(repoPath: String, label: String? = nil, focus: Bool = true) -> HerdrWorkspaceResult {
+        let status = getHerdrStatus()
+        guard status.isRunning else {
+            return HerdrWorkspaceResult(
+                success: false,
+                message: "Herdr is not running. Start Herdr in a terminal and try again."
+            )
+        }
+
+        var args = ["workspace", "create", "--cwd", repoPath]
+        let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedLabel.isEmpty {
+            args.append(contentsOf: ["--label", trimmedLabel])
+        }
+        args.append(focus ? "--focus" : "--no-focus")
+
+        let result = runHerdrCommandResult(args)
+        guard result.status == 0 else {
+            let message = result.stderr.isEmpty ? result.stdout : result.stderr
+            return HerdrWorkspaceResult(
+                success: false,
+                message: message.isEmpty ? "Herdr could not create the workspace." : message
+            )
+        }
+
+        let workspaceID = parseWorkspaceID(result.stdout)
+        return HerdrWorkspaceResult(
+            success: true,
+            workspaceID: workspaceID,
+            message: result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 
@@ -322,30 +367,34 @@ public final class HerdrService: @unchecked Sendable {
     }
 
     private func runHerdrCommand(_ args: [String]) -> String {
-        guard let exe = findExecutable() else { return "" }
+        let result = runHerdrCommandResult(args)
+        return result.stdout.isEmpty ? result.stderr : result.stdout
+    }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: exe)
-        process.arguments = args
-
-        let pipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = errPipe
-
-        do {
-            try process.run()
-            let outData = pipe.fileHandleForReading.readDataToEndOfFile()
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-
-            if let str = String(data: outData, encoding: .utf8), !str.isEmpty {
-                return str
-            }
-            return String(data: errData, encoding: .utf8) ?? ""
-        } catch {
-            return ""
+    private func runHerdrCommandResult(_ args: [String]) -> ProcessRunResult {
+        guard let exe = findExecutable() else {
+            return ProcessRunResult(status: -1, stdout: "", stderr: "Herdr executable not found")
         }
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["HERDR_PROMPT_DISABLED"] = "1"
+        return ProcessRunner.run(
+            executable: exe,
+            arguments: args,
+            currentDirectory: FileManager.default.homeDirectoryForCurrentUser.path,
+            environment: environment,
+            timeout: 15
+        )
+    }
+
+    private func parseWorkspaceID(_ output: String) -> String? {
+        guard let data = output.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = json["result"] as? [String: Any],
+              let workspace = result["workspace"] as? [String: Any] else {
+            return nil
+        }
+        return workspace["workspace_id"] as? String ?? workspace["id"] as? String
     }
 
     private func activateTerminalApplication() {

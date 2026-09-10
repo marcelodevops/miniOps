@@ -53,6 +53,20 @@ print("==================================================")
 print("Running miniOps Git Safety & Correctness Tests")
 print("==================================================")
 
+// Test 0: Process Runner Enforces Deadlines
+print("Test 0: Process Runner Enforces Deadlines")
+do {
+    let result = ProcessRunner.run(
+        executable: "/bin/sh",
+        arguments: ["-c", "sleep 2"],
+        currentDirectory: NSTemporaryDirectory(),
+        timeout: 0.1
+    )
+    assert(result.timedOut, "A process exceeding its deadline must be marked timed out")
+    assert(result.status != 0, "A timed-out process must not report success")
+    assert(result.stderr.contains("timed out"), "Timeout diagnostics must be returned")
+}
+
 // Test 1: Selective Commit Stages Only Specified Paths
 print("Test 1: Selective Commit Stages Only Specified Paths")
 do {
@@ -995,6 +1009,9 @@ do {
     if let exe = herdr.findExecutable() {
         assert(FileManager.default.isExecutableFile(atPath: exe), "Found valid executable herdr")
     }
+
+    let workspaceResult = HerdrWorkspaceResult(success: true, workspaceID: "w-test", message: "created")
+    assertEqual(workspaceResult.workspaceID, "w-test", "Workspace result preserves created workspace ID")
 }
 
 print("==================================================")

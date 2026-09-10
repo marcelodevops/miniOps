@@ -17,49 +17,18 @@ public final class GitService: @unchecked Sendable {
     }
 
     private func runGit(args: [String], in repoPath: String, timeout: TimeInterval = 60) -> (status: Int32, stdout: String, stderr: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = args
-        process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
-        process.environment = gitEnv()
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        do {
-            try process.run()
-            
-            // Collect output concurrently to prevent pipe buffer deadlock
-            var stdoutData = Data()
-            var stderrData = Data()
-            
-            let group = DispatchGroup()
-            group.enter()
-            DispatchQueue.global().async {
-                stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                group.leave()
-            }
-            group.enter()
-            DispatchQueue.global().async {
-                stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                group.leave()
-            }
-            
-            process.waitUntilExit()
-            group.wait()
-            
-            let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-            var cleanStdout = stdout
-            while cleanStdout.hasSuffix("\n") || cleanStdout.hasSuffix("\r") {
-                cleanStdout.removeLast()
-            }
-            return (process.terminationStatus, cleanStdout, stderr.trimmingCharacters(in: .whitespacesAndNewlines))
-        } catch {
-            return (-1, "", error.localizedDescription)
+        let result = ProcessRunner.run(
+            executable: "/usr/bin/git",
+            arguments: args,
+            currentDirectory: repoPath,
+            environment: gitEnv(),
+            timeout: timeout
+        )
+        var cleanStdout = result.stdout
+        while cleanStdout.hasSuffix("\n") || cleanStdout.hasSuffix("\r") {
+            cleanStdout.removeLast()
         }
+        return (result.status, cleanStdout, result.stderr)
     }
 
     public func getRepoStatus(repoPath: String) -> (branch: String, isDirty: Bool, ahead: Int, behind: Int, changes: [GitFileChange]) {

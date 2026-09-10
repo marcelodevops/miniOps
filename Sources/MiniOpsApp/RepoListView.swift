@@ -4,19 +4,34 @@ import MiniOpsCore
 public struct RepoListView: View {
     public let repos: [RepoInfo]
     public let selectedRepoPath: String?
+    public let fileTree: FileNode?
+    public let selectedFilePath: String?
+    @Binding public var expandedFolderPaths: Set<String>
     public let onSelectRepo: (RepoInfo) -> Void
+    public let onSelectFile: (String) -> Void
     public var onHideRepo: ((RepoInfo) -> Void)?
+    public var onAddToHerdr: ((RepoInfo) -> Void)?
 
     public init(
         repos: [RepoInfo],
         selectedRepoPath: String?,
+        fileTree: FileNode?,
+        selectedFilePath: String?,
+        expandedFolderPaths: Binding<Set<String>>,
         onSelectRepo: @escaping (RepoInfo) -> Void,
-        onHideRepo: ((RepoInfo) -> Void)? = nil
+        onSelectFile: @escaping (String) -> Void,
+        onHideRepo: ((RepoInfo) -> Void)? = nil,
+        onAddToHerdr: ((RepoInfo) -> Void)? = nil
     ) {
         self.repos = repos
         self.selectedRepoPath = selectedRepoPath
+        self.fileTree = fileTree
+        self.selectedFilePath = selectedFilePath
+        self._expandedFolderPaths = expandedFolderPaths
         self.onSelectRepo = onSelectRepo
+        self.onSelectFile = onSelectFile
         self.onHideRepo = onHideRepo
+        self.onAddToHerdr = onAddToHerdr
     }
 
     public var body: some View {
@@ -32,33 +47,45 @@ public struct RepoListView: View {
                 if !group.isEmpty {
                     Section(header: Text(group).font(.system(size: 11, weight: .bold)).foregroundColor(.secondary)) {
                         ForEach(grouped[group] ?? []) { repo in
-                            RepoRow(
-                                repo: repo,
-                                isSelected: repo.path == selectedRepoPath,
-                                onHideRepo: onHideRepo
-                            )
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                onSelectRepo(repo)
-                            }
+                            repoTree(for: repo)
                         }
                     }
                 } else {
                     ForEach(grouped[group] ?? []) { repo in
-                        RepoRow(
-                            repo: repo,
-                            isSelected: repo.path == selectedRepoPath,
-                            onHideRepo: onHideRepo
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            onSelectRepo(repo)
-                        }
+                        repoTree(for: repo)
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+    }
+
+    @ViewBuilder
+    private func repoTree(for repo: RepoInfo) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RepoRow(
+                repo: repo,
+                isSelected: repo.path == selectedRepoPath,
+                onHideRepo: onHideRepo,
+                onAddToHerdr: onAddToHerdr
+            )
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onSelectRepo(repo)
+            }
+
+            if repo.path == selectedRepoPath, let fileTree {
+                FileNavigatorView(
+                    repoPath: repo.path,
+                    rootNode: fileTree,
+                    selectedFilePath: selectedFilePath,
+                    expandedFolderPaths: $expandedFolderPaths,
+                    onSelectFile: onSelectFile
+                )
+                .padding(.leading, 12)
+                .padding(.bottom, 4)
+            }
+        }
     }
 }
 
@@ -66,6 +93,7 @@ private struct RepoRow: View {
     let repo: RepoInfo
     let isSelected: Bool
     var onHideRepo: ((RepoInfo) -> Void)? = nil
+    var onAddToHerdr: ((RepoInfo) -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 8) {
@@ -130,6 +158,12 @@ private struct RepoRow: View {
                 .fill(isSelected ? Color.accentColor : Color.clear)
         )
         .contextMenu {
+            Button {
+                onAddToHerdr?(repo)
+            } label: {
+                Label("Create Herdr Workspace", systemImage: "rectangle.3.group")
+            }
+
             Button {
                 onHideRepo?(repo)
             } label: {

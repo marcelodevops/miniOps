@@ -340,6 +340,23 @@ public final class WorkspaceViewModel: ObservableObject {
         refreshAgents()
     }
 
+    public func addRepoToHerdr(_ repo: RepoInfo) {
+        let repoPath = repo.path
+        let repoName = repo.name
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = HerdrService.shared.createWorkspace(repoPath: repoPath, label: repoName)
+            guard !result.success else { return }
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Could Not Create Herdr Workspace"
+                alert.informativeText = result.message
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
+    }
+
     public func unhideRepo(path: String) {
         stateStore.unhideRepo(path: path)
         hiddenRepoPaths.remove(path)

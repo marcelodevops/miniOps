@@ -244,47 +244,16 @@ public final class GitHubService: @unchecked Sendable {
     }
 
     private func runProcess(executable: String, args: [String], in directory: String, timeout: TimeInterval = 60) -> (status: Int32, stdout: String, stderr: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = args
-        process.currentDirectoryURL = URL(fileURLWithPath: directory)
-
         var env = ProcessInfo.processInfo.environment
         env["GIT_TERMINAL_PROMPT"] = "0"
         env["GH_PROMPT_DISABLED"] = "1"
-        process.environment = env
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        do {
-            try process.run()
-
-            var stdoutData = Data()
-            var stderrData = Data()
-
-            let group = DispatchGroup()
-            group.enter()
-            DispatchQueue.global().async {
-                stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                group.leave()
-            }
-            group.enter()
-            DispatchQueue.global().async {
-                stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                group.leave()
-            }
-
-            process.waitUntilExit()
-            group.wait()
-
-            let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-            return (process.terminationStatus, stdout, stderr)
-        } catch {
-            return (-1, "", error.localizedDescription)
-        }
+        let result = ProcessRunner.run(
+            executable: executable,
+            arguments: args,
+            currentDirectory: directory,
+            environment: env,
+            timeout: timeout
+        )
+        return (result.status, result.stdout, result.stderr)
     }
 }

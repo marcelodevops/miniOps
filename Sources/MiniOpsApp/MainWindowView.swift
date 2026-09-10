@@ -101,51 +101,24 @@ public struct MainWindowView: View {
                                 || ($0.groupName?.localizedCaseInsensitiveContains(repositorySearch) ?? false)
                         },
                         selectedRepoPath: viewModel.selectedRepo?.path,
+                        fileTree: viewModel.fileTree,
+                        selectedFilePath: viewModel.selectedFilePath,
+                        expandedFolderPaths: $viewModel.expandedFolderPaths,
                         onSelectRepo: { repo in
                             viewModel.selectRepo(repo)
                         },
+                        onSelectFile: { filePath in
+                            viewModel.selectFile(filePath)
+                        },
                         onHideRepo: { repo in
                             viewModel.hideRepo(repo)
+                        },
+                        onAddToHerdr: { repo in
+                            viewModel.addRepoToHerdr(repo)
                         }
                     )
                 }
                 .frame(minHeight: 180, idealHeight: 280, maxHeight: 320)
-
-                Divider()
-
-                // File Navigator for Selected Repo
-                if let repo = viewModel.selectedRepo, let rootNode = viewModel.fileTree {
-                    VStack(alignment: .leading, spacing: 0) {
-                        HStack {
-                            Text("FILES — \(repo.name)")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.top, 6)
-                        .padding(.bottom, 2)
-
-                        FileNavigatorView(
-                            repoPath: repo.path,
-                            rootNode: rootNode,
-                            selectedFilePath: viewModel.selectedFilePath,
-                            expandedFolderPaths: $viewModel.expandedFolderPaths,
-                            onSelectFile: { filePath in
-                                viewModel.selectFile(filePath)
-                            }
-                        )
-                    }
-                } else {
-                    VStack {
-                        Spacer()
-                        Text("Select a repository")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
-                }
             }
             .frame(minWidth: 240, idealWidth: 280, maxWidth: 350)
             .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 350)
