@@ -1185,7 +1185,85 @@ do {
     )
 }
 
+// Test 26: Jira Service, URL Normalization, and Ticket Caching
+print("Test 26: Jira Service, URL Normalization, and Ticket Caching")
+do {
+    let jira = JiraService.shared
+
+    // URL normalization
+    assertEqual(
+        jira.normalizeBaseURL("https://marcelops.atlassian.net/"),
+        "https://marcelops.atlassian.net",
+        "Trailing slashes are stripped"
+    )
+    assertEqual(
+        jira.normalizeBaseURL("marcelops.atlassian.net"),
+        "https://marcelops.atlassian.net",
+        "Missing scheme is defaulted to https"
+    )
+
+    // Basic Auth header formatting
+    let authHeader = jira.createAuthHeader(email: "test@example.com", token: "api-token-xyz")
+    assert(authHeader.hasPrefix("Basic "), "Auth header starts with Basic")
+    let b64 = String(authHeader.dropFirst("Basic ".count))
+    if let decodedData = Data(base64Encoded: b64), let decoded = String(data: decodedData, encoding: .utf8) {
+        assertEqual(decoded, "test@example.com:api-token-xyz", "Decoded credentials match email:token")
+    } else {
+        assert(false, "Auth header base64 decoded successfully")
+    }
+
+    // Cache saving and TicketScanner integration
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let sampleTickets = [
+        TicketInfo(
+            key: "KAN-1",
+            summary: "Task 1",
+            status: "In Progress",
+            statusCategory: "in_progress",
+            priority: "None",
+            isOpen: true,
+            localPath: nil,
+            notes: ""
+        ),
+        TicketInfo(
+            key: "KAN-2",
+            summary: "Completed Task",
+            status: "Done",
+            statusCategory: "done",
+            priority: "Low",
+            isOpen: false,
+            localPath: nil,
+            notes: ""
+        )
+    ]
+
+    jira.saveCache(tickets: sampleTickets, baseURL: "https://marcelops.atlassian.net", workspacePath: tempDir.path)
+
+    let cacheFile = tempDir.appendingPathComponent("jira-cache.json")
+    assert(FileManager.default.fileExists(atPath: cacheFile.path), "jira-cache.json was written to workspace root")
+
+    let scanned = TicketScanner.shared.scanTickets(workspacePath: tempDir.path)
+    assertEqual(scanned.count, 2, "Scanned 2 tickets from generated jira-cache.json")
+
+    let kan1 = scanned.first(where: { $0.key == "KAN-1" })
+    assert(kan1 != nil, "Found KAN-1 in scanned tickets")
+    assertEqual(kan1?.summary, "Task 1", "Summary matches")
+    assertEqual(kan1?.status, "In Progress", "Status matches")
+    assertEqual(kan1?.isOpen, true, "KAN-1 is open")
+
+    let branch = TicketScanner.shared.makeFeatureBranchName(ticket: kan1!)
+    assertEqual(branch, "feat/KAN-1-task-1", "Derived branch name feat/KAN-1-task-1")
+
+    let openOnly = TicketScanner.shared.filter(tickets: scanned, searchText: "", openOnly: true)
+    assertEqual(openOnly.count, 1, "Only 1 open ticket matches filter")
+    assertEqual(openOnly.first?.key, "KAN-1", "Open ticket is KAN-1")
+}
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")
 if failedCount > 0 { exit(1) }
+

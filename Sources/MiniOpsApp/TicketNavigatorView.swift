@@ -9,6 +9,8 @@ import MiniOpsCore
 public struct TicketNavigatorView: View {
     public let tickets: [TicketInfo]
     public let selectedRepoPath: String?
+    public var isSyncing: Bool = false
+    public var syncStatus: String? = nil
     public let onSelectTicket: (TicketInfo) -> Void
     public let onCreateBranch: (TicketInfo) -> Void
     public let onRefresh: () -> Void
@@ -21,6 +23,8 @@ public struct TicketNavigatorView: View {
         tickets: [TicketInfo],
         selectedRepoPath: String?,
         isExpanded: Binding<Bool>,
+        isSyncing: Bool = false,
+        syncStatus: String? = nil,
         onSelectTicket: @escaping (TicketInfo) -> Void,
         onCreateBranch: @escaping (TicketInfo) -> Void,
         onRefresh: @escaping () -> Void
@@ -28,6 +32,8 @@ public struct TicketNavigatorView: View {
         self.tickets = tickets
         self.selectedRepoPath = selectedRepoPath
         self._isExpanded = isExpanded
+        self.isSyncing = isSyncing
+        self.syncStatus = syncStatus
         self.onSelectTicket = onSelectTicket
         self.onCreateBranch = onCreateBranch
         self.onRefresh = onRefresh
@@ -68,12 +74,26 @@ public struct TicketNavigatorView: View {
 
             Spacer()
 
+            if isSyncing {
+                ProgressView()
+                    .controlSize(.mini)
+                    .help("Syncing Jira tickets…")
+            }
+
+            if let status = syncStatus {
+                Text(status)
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+
             Button(action: onRefresh) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 10))
             }
+            .disabled(isSyncing)
             .buttonStyle(.borderless)
-            .help("Rescan tickets")
+            .help("Rescan and sync Jira tickets")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

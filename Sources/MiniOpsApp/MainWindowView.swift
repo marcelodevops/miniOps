@@ -130,6 +130,8 @@ public struct MainWindowView: View {
                     tickets: viewModel.tickets,
                     selectedRepoPath: viewModel.selectedRepo?.path,
                     isExpanded: $isTicketNavigatorExpanded,
+                    isSyncing: viewModel.isSyncingTickets,
+                    syncStatus: viewModel.ticketSyncStatus,
                     onSelectTicket: { ticket in
                         viewModel.openTicket(ticket)
                     },
@@ -137,7 +139,7 @@ public struct MainWindowView: View {
                         viewModel.createBranchForTicket(ticket)
                     },
                     onRefresh: {
-                        viewModel.refreshTickets()
+                        viewModel.syncJiraTickets()
                     }
                 )
                 .background(Color(NSColor.controlBackgroundColor).opacity(0.35))

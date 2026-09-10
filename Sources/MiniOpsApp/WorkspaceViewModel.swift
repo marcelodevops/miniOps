@@ -25,6 +25,8 @@ public final class WorkspaceViewModel: ObservableObject {
     @Published public var selectedFilesForCommit: Set<String> = []
     @Published public var activeAgents: [AgentInfo] = []
     @Published public var tickets: [TicketInfo] = []
+    @Published public var isSyncingTickets: Bool = false
+    @Published public var ticketSyncStatus: String? = nil
     @Published public var graphData: GraphifyData? = nil
     private var previouslyNotifiedWaitingPIDs: Set<Int> = []
     private let agentScanner = AgentScanner.shared
@@ -94,6 +96,7 @@ public final class WorkspaceViewModel: ObservableObject {
                 }
                 self.refreshAgents()
                 self.refreshTickets()
+                self.syncJiraTickets()
                 self.refreshGraph()
             }
         }
@@ -248,6 +251,37 @@ public final class WorkspaceViewModel: ObservableObject {
         self.tickets = TicketScanner.shared.scanTickets(workspacePath: workspacePath, repoPath: selectedRepo?.path)
     }
 
+    public func syncJiraTickets() {
+        let settings = stateStore.getIntegrationSettings()
+        guard !settings.jiraBaseURL.isEmpty, !settings.jiraEmail.isEmpty else {
+            self.refreshTickets()
+            return
+        }
+        guard CredentialStore.shared.hasSecret(for: .jira) else {
+            self.refreshTickets()
+            return
+        }
+
+        isSyncingTickets = true
+        ticketSyncStatus = "Syncing Jira tickets…"
+
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            let res = await JiraService.shared.syncTickets(workspacePath: self.workspacePath)
+            self.isSyncingTickets = false
+            if res.success {
+                self.ticketSyncStatus = res.ticketCount == 1 ? "Synced 1 ticket" : "Synced \(res.ticketCount) tickets"
+            } else {
+                self.ticketSyncStatus = res.error ?? "Jira sync failed"
+            }
+            self.refreshTickets()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                self?.ticketSyncStatus = nil
+            }
+        }
+    }
+
     public func refreshAgents() {
         let repos = repositories
         DispatchQueue.global(qos: .utility).async { [agentScanner] in
@@ -357,26 +391,33 @@ public final class WorkspaceViewModel: ObservableObject {
         }
     }
 
-    /// Opens a ticket's local markdown file in the editor when it lives inside the selected repository.
+    /// Opens a ticket's local markdown file in the editor, or launches the ticket URL in the browser.
     public func openTicket(_ ticket: TicketInfo) {
-        guard let localPath = ticket.localPath else {
-            presentAlert(title: "No Local File", message: "\(ticket.key) has no local file to open.")
-            return
-        }
-        guard let repo = selectedRepo else {
-            presentAlert(title: "No Repository Selected", message: "Select a repository before opening a ticket file.")
+        if let localPath = ticket.localPath, localPath.lowercased().hasSuffix(".md") {
+            guard let repo = selectedRepo else {
+                presentAlert(title: "No Repository Selected", message: "Select a repository before opening a ticket file.")
+                return
+            }
+            guard let relativePath = TicketScanner.shared.repoRelativePath(forTicketPath: localPath, repoPath: repo.path) else {
+                presentAlert(
+                    title: "Ticket Outside Repository",
+                    message: "\(ticket.key) is stored outside \(repo.name) and cannot be opened here."
+                )
+                return
+            }
+            selectFile(relativePath)
             return
         }
 
-        guard let relativePath = TicketScanner.shared.repoRelativePath(forTicketPath: localPath, repoPath: repo.path) else {
-            presentAlert(
-                title: "Ticket Outside Repository",
-                message: "\(ticket.key) is stored outside \(repo.name) and cannot be opened here."
-            )
+        // Open in Jira browser if URL or key is available
+        let settings = stateStore.getIntegrationSettings()
+        let cleanBase = JiraService.shared.normalizeBaseURL(settings.jiraBaseURL)
+        if !cleanBase.isEmpty, let url = URL(string: "\(cleanBase)/browse/\(ticket.key)") {
+            NSWorkspace.shared.open(url)
             return
         }
 
-        selectFile(relativePath)
+        presentAlert(title: "No Local File", message: "\(ticket.key) has no local markdown file to open.")
     }
 
     public func createBranchForTicket(_ ticket: TicketInfo) {

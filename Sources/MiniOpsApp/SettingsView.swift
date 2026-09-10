@@ -429,6 +429,7 @@ private struct CredentialsSettingsTab: View {
     @State private var githubToken: String = ""
     @State private var storedJiraToken: String?
     @State private var storedGitHubToken: String?
+    @State private var isTestingJira: Bool = false
     @State private var statusMessage: String?
     @State private var isStatusError: Bool = false
 
@@ -486,6 +487,9 @@ private struct CredentialsSettingsTab: View {
                         Button("Save Jira Credentials") { saveJira() }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
+                        Button(isTestingJira ? "Testing…" : "Test Connection & Sync") { testAndSyncJira() }
+                            .controlSize(.small)
+                            .disabled(isTestingJira || (storedJiraToken == nil && jiraToken.isEmpty))
                         Button("Clear Token") { clearToken(.jira) }
                             .controlSize(.small)
                             .disabled(storedJiraToken == nil)
@@ -563,6 +567,49 @@ private struct CredentialsSettingsTab: View {
         }
         jiraToken = ""
         load()
+    }
+
+    private func testAndSyncJira() {
+        persistNonSecrets()
+        if !jiraToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            _ = CredentialStore.shared.saveSecret(jiraToken, for: .jira)
+            jiraToken = ""
+            load()
+        }
+
+        guard let token = CredentialStore.shared.readSecret(for: .jira), !token.isEmpty else {
+            report("No Jira API token stored to test.", isError: true)
+            return
+        }
+
+        isTestingJira = true
+        report("Verifying credentials with Jira…", isError: false)
+
+        let targetBase = jiraBaseURL
+        let targetEmail = jiraEmail
+        let wsPath = WorkspaceStateStore.shared.getAppState().lastWorkspacePath ?? "~/repos"
+
+        Task {
+            let verify = await JiraService.shared.verifyCredentials(baseURL: targetBase, email: targetEmail, token: token)
+            if !verify.success {
+                await MainActor.run {
+                    self.isTestingJira = false
+                    self.report(verify.error ?? "Jira authentication failed", isError: true)
+                }
+                return
+            }
+
+            let sync = await JiraService.shared.syncTickets(workspacePath: wsPath)
+            await MainActor.run {
+                self.isTestingJira = false
+                let userLabel = verify.displayName ?? verify.email ?? targetEmail
+                if sync.success {
+                    self.report("Connected as \(userLabel). Synced \(sync.ticketCount) ticket(s).", isError: false)
+                } else {
+                    self.report("Connected as \(userLabel), but sync returned: \(sync.error ?? "error")", isError: true)
+                }
+            }
+        }
     }
 
     private func saveGitHub() {
