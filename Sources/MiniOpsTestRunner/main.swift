@@ -1014,6 +1014,48 @@ do {
     assertEqual(workspaceResult.workspaceID, "w-test", "Workspace result preserves created workspace ID")
 }
 
+// Test 22: Add, Commit and Push in a Single Step (xgit)
+print("Test 22: Add, Commit and Push in a Single Step (xgit)")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let gitService = GitService.shared
+
+    // Local bare repository acting as "origin" so the push really happens.
+    let remoteURL = tempDir.appendingPathComponent("origin.git")
+    _ = runGit(args: ["init", "--bare", "-b", "main", remoteURL.path], in: tempDir.path)
+    _ = runGit(args: ["remote", "add", "origin", remoteURL.path], in: repoURL.path)
+
+    // Empty message is rejected before touching the repository.
+    let emptyMsg = gitService.addCommitPush(repoPath: repoURL.path, message: "   ")
+    assert(!emptyMsg.success, "addCommitPush must reject an empty commit message")
+
+    // Clean repository has nothing to stage, exactly like xgit's --cached guard.
+    let cleanResult = gitService.addCommitPush(repoPath: repoURL.path, message: "no changes")
+    assert(!cleanResult.success, "addCommitPush must fail on a clean repository")
+    assert(cleanResult.error?.contains("Nothing to commit") == true, "Clean repository reports 'Nothing to commit'")
+
+    try! FileSystemService.shared.writeFile(repoPath: repoURL.path, filePath: "src/app.swift", content: "print(\"xgit\")\n")
+
+    // First push has no upstream yet, so it must set one automatically.
+    let result = gitService.addCommitPush(repoPath: repoURL.path, message: "feat: add app entry point")
+    assert(result.success, "addCommitPush must stage, commit and push in one step")
+
+    assertEqual(runGit(args: ["log", "-1", "--pretty=%s"], in: repoURL.path), "feat: add app entry point", "Custom commit message was used")
+    assertEqual(runGit(args: ["show", "--pretty=", "--name-only", "HEAD"], in: repoURL.path), "src/app.swift", "All changes were staged and committed")
+    assertEqual(runGit(args: ["rev-parse", "--abbrev-ref", "@{upstream}"], in: repoURL.path), "origin/main", "Upstream was set on first push")
+    assertEqual(
+        runGit(args: ["rev-parse", "HEAD"], in: repoURL.path),
+        runGit(args: ["--git-dir", remoteURL.path, "rev-parse", "main"], in: tempDir.path),
+        "Remote received the new commit"
+    )
+
+    let (_, isDirtyAfter, ahead, _, _) = gitService.getRepoStatus(repoPath: repoURL.path)
+    assert(!isDirtyAfter, "Working tree is clean after add/commit/push")
+    assertEqual(ahead, 0, "Nothing left to push after addCommitPush")
+}
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")
