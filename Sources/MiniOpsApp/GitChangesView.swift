@@ -164,7 +164,7 @@ public struct GitChangesView: View {
                 .padding(10)
                 .background(Color(NSColor.windowBackgroundColor))
             }
-            .frame(minWidth: 260, idealWidth: 300, maxWidth: 450)
+            .frame(minWidth: 200, idealWidth: 300, maxWidth: 450)
 
             // Right Pane: One file's diff viewer at a time
             VStack(alignment: .leading, spacing: 0) {
@@ -212,8 +212,10 @@ public struct GitChangesView: View {
                     .background(Color(NSColor.textBackgroundColor))
                 }
             }
-            .frame(minWidth: 300, maxWidth: .infinity)
+            .frame(minWidth: 220, maxWidth: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
         .onAppear {
             if let first = changes.first {
                 loadDiff(for: first.path)
