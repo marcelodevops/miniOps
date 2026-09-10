@@ -730,3 +730,62 @@ do {
 }
 print("Safety regression total: \(passedCount) passed, \(failedCount) failed")
 if failedCount > 0 { exit(1) }
+
+// Test 19: GitHub Repository Cloning and Remote Creation Validation
+print("Test 19: GitHub Repository Cloning and Remote Creation Validation")
+do {
+    let ghService = GitHubService.shared
+
+    // Name validation
+    assertEqual(ghService.validateRepoName("my-app").valid, true, "Valid repo name 'my-app'")
+    assertEqual(ghService.validateRepoName("Project_123.swift").valid, true, "Valid repo name with underscores and dots")
+    assertEqual(ghService.validateRepoName("").valid, false, "Empty repo name is invalid")
+    assertEqual(ghService.validateRepoName(".").valid, false, "Single dot repo name is invalid")
+    assertEqual(ghService.validateRepoName("..").valid, false, "Double dot repo name is invalid")
+    assertEqual(ghService.validateRepoName("invalid/repo").valid, false, "Slash in repo name is invalid")
+    assertEqual(ghService.validateRepoName("repo with spaces").valid, false, "Spaces in repo name are invalid")
+
+    // Folder name derivation
+    assertEqual(ghService.deriveFolderName(from: "https://github.com/marcelodevops/miniOps.git"), "miniOps", "Derive folder from https git url")
+    assertEqual(ghService.deriveFolderName(from: "git@github.com:owner/custom-project.git"), "custom-project", "Derive folder from ssh git url")
+    assertEqual(ghService.deriveFolderName(from: "marcelodevops/openclaw"), "openclaw", "Derive folder from owner/name shorthand")
+    assertEqual(ghService.deriveFolderName(from: "my-standalone-repo"), "my-standalone-repo", "Derive folder from simple name")
+
+    // Destination checks
+    let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("miniOps-clone-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // Pre-create an existing folder
+    let existingDir = tempDir.appendingPathComponent("existing-repo")
+    try! FileManager.default.createDirectory(at: existingDir, withIntermediateDirectories: true)
+
+    // Clone rejects empty URL
+    let emptyClone = ghService.cloneRepository(urlOrName: "", destinationDirectory: tempDir.path)
+    assertEqual(emptyClone.success, false, "Clone rejects empty URL")
+
+    // Clone rejects existing destination
+    let existingClone = ghService.cloneRepository(urlOrName: "https://github.com/foo/existing-repo.git", destinationDirectory: tempDir.path)
+    assertEqual(existingClone.success, false, "Clone rejects existing target directory")
+
+    // Clone rejects non-existent destination directory
+    let badDestClone = ghService.cloneRepository(urlOrName: "https://github.com/foo/bar.git", destinationDirectory: "/nonexistent/path/\(UUID().uuidString)")
+    assertEqual(badDestClone.success, false, "Clone rejects non-existent destination directory")
+
+    // Create remote rejects invalid repo name
+    let badNameCreate = ghService.createAndCloneRemoteRepository(name: "../bad..name", isPrivate: true, destinationDirectory: tempDir.path)
+    assertEqual(badNameCreate.success, false, "Create remote rejects invalid repo name")
+
+    // Create remote rejects existing destination
+    let existingCreate = ghService.createAndCloneRemoteRepository(name: "existing-repo", isPrivate: true, destinationDirectory: tempDir.path)
+    assertEqual(existingCreate.success, false, "Create remote rejects existing target directory")
+
+    // Create remote rejects non-existent destination
+    let badDestCreate = ghService.createAndCloneRemoteRepository(name: "new-repo", isPrivate: true, destinationDirectory: "/nonexistent/path/\(UUID().uuidString)")
+    assertEqual(badDestCreate.success, false, "Create remote rejects non-existent destination directory")
+}
+
+print("==================================================")
+print("Complete Full Clone & Remote Repo Test Suite: \(passedCount) passed, \(failedCount) failed")
+print("==================================================")
+if failedCount > 0 { exit(1) }
