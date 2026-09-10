@@ -96,6 +96,9 @@ public struct MainWindowView: View {
                         selectedRepoPath: viewModel.selectedRepo?.path,
                         onSelectRepo: { repo in
                             viewModel.selectRepo(repo)
+                        },
+                        onHideRepo: { repo in
+                            viewModel.hideRepo(repo)
                         }
                     )
                 }

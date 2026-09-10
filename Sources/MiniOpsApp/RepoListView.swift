@@ -5,15 +5,18 @@ public struct RepoListView: View {
     public let repos: [RepoInfo]
     public let selectedRepoPath: String?
     public let onSelectRepo: (RepoInfo) -> Void
+    public var onHideRepo: ((RepoInfo) -> Void)?
 
     public init(
         repos: [RepoInfo],
         selectedRepoPath: String?,
-        onSelectRepo: @escaping (RepoInfo) -> Void
+        onSelectRepo: @escaping (RepoInfo) -> Void,
+        onHideRepo: ((RepoInfo) -> Void)? = nil
     ) {
         self.repos = repos
         self.selectedRepoPath = selectedRepoPath
         self.onSelectRepo = onSelectRepo
+        self.onHideRepo = onHideRepo
     }
 
     public var body: some View {
@@ -29,20 +32,28 @@ public struct RepoListView: View {
                 if !group.isEmpty {
                     Section(header: Text(group).font(.system(size: 11, weight: .bold)).foregroundColor(.secondary)) {
                         ForEach(grouped[group] ?? []) { repo in
-                            RepoRow(repo: repo, isSelected: repo.path == selectedRepoPath)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    onSelectRepo(repo)
-                                }
-                        }
-                    }
-                } else {
-                    ForEach(grouped[group] ?? []) { repo in
-                        RepoRow(repo: repo, isSelected: repo.path == selectedRepoPath)
+                            RepoRow(
+                                repo: repo,
+                                isSelected: repo.path == selectedRepoPath,
+                                onHideRepo: onHideRepo
+                            )
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 onSelectRepo(repo)
                             }
+                        }
+                    }
+                } else {
+                    ForEach(grouped[group] ?? []) { repo in
+                        RepoRow(
+                            repo: repo,
+                            isSelected: repo.path == selectedRepoPath,
+                            onHideRepo: onHideRepo
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            onSelectRepo(repo)
+                        }
                     }
                 }
             }
@@ -54,6 +65,7 @@ public struct RepoListView: View {
 private struct RepoRow: View {
     let repo: RepoInfo
     let isSelected: Bool
+    var onHideRepo: ((RepoInfo) -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 8) {
@@ -117,5 +129,27 @@ private struct RepoRow: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? Color.accentColor : Color.clear)
         )
+        .contextMenu {
+            Button {
+                onHideRepo?(repo)
+            } label: {
+                Label("Hide Repository", systemImage: "eye.slash")
+            }
+
+            Divider()
+
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(repo.path, forType: .string)
+            } label: {
+                Label("Copy Path", systemImage: "doc.on.doc")
+            }
+
+            Button {
+                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: repo.path)
+            } label: {
+                Label("Reveal in Finder", systemImage: "folder")
+            }
+        }
     }
 }
