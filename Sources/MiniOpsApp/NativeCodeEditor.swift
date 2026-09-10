@@ -69,6 +69,12 @@ public class NativeTextView: NSTextView {
     public var onSave: (() -> Void)?
 
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "f" {
+            let item = NSMenuItem()
+            item.tag = NSTextFinder.Action.showFindInterface.rawValue
+            performTextFinderAction(item)
+            return true
+        }
         if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "s" {
             onSave?()
             return true
@@ -114,6 +120,10 @@ public struct NativeCodeEditorView: NSViewRepresentable {
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = true
         textView.autoresizingMask = [.width, .height]
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.usesFindBar = true
+        textView.isIncrementalSearchingEnabled = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -133,8 +143,9 @@ public struct NativeCodeEditorView: NSViewRepresentable {
 
     public func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NativeTextView else { return }
+        context.coordinator.parent = self
         textView.onSave = onSave
-        if context.coordinator.currentFilePath != filePath {
+        if context.coordinator.currentFilePath != filePath || textView.string != text {
             context.coordinator.updateText(text, filePath: filePath)
         }
     }
@@ -152,6 +163,7 @@ public struct NativeCodeEditorView: NSViewRepresentable {
         func updateText(_ newText: String, filePath: String) {
             guard let textView = textView else { return }
             self.currentFilePath = filePath
+            textView.undoManager?.removeAllActions()
             self.isUpdatingInternally = true
 
             let font = TerminalSessionManager.shared.resolveNerdFont(size: 13)
@@ -189,11 +201,6 @@ public struct EditorContainerView: View {
     public var filePath: String
     public var onSave: () -> Void
 
-    @State private var isSearchBarVisible: Bool = false
-    @State private var searchKeyword: String = ""
-    @State private var matchIndex: Int = 0
-    @State private var totalMatches: Int = 0
-
     public init(text: Binding<String>, isModified: Binding<Bool>, filePath: String, onSave: @escaping () -> Void) {
         self._text = text
         self._isModified = isModified
@@ -218,7 +225,11 @@ public struct EditorContainerView: View {
                 Spacer()
 
                 // Find button
-                Button(action: { isSearchBarVisible.toggle() }) {
+                Button(action: {
+                    let item = NSMenuItem()
+                    item.tag = NSTextFinder.Action.showFindInterface.rawValue
+                    NSApp.sendAction(#selector(NSTextView.performTextFinderAction(_:)), to: nil, from: item)
+                }) {
                     Image(systemName: "magnifyingglass")
                 }
                 .buttonStyle(.borderless)
@@ -240,32 +251,6 @@ public struct EditorContainerView: View {
 
             Divider()
 
-            // Search Bar Overlay if active
-            if isSearchBarVisible {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    TextField("Find in file...", text: $searchKeyword)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 240)
-                    if !searchKeyword.isEmpty {
-                        let count = countMatches(in: text, query: searchKeyword)
-                        Text("\(count) match\(count == 1 ? "" : "es")")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Button("Done") {
-                        isSearchBarVisible = false
-                        searchKeyword = ""
-                    }
-                    .buttonStyle(.borderless)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Color(NSColor.windowBackgroundColor))
-                Divider()
-            }
-
             // Native Editor View
             NativeCodeEditorView(
                 text: $text,
@@ -276,8 +261,4 @@ public struct EditorContainerView: View {
         }
     }
 
-    private func countMatches(in text: String, query: String) -> Int {
-        guard !query.isEmpty else { return 0 }
-        return text.components(separatedBy: query).count - 1
-    }
 }
