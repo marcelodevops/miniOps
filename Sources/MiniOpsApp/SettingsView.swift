@@ -9,6 +9,7 @@ public struct SettingsView: View {
     public enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
         case hiddenRepos = "Repositories"
+        case integrations = "Integrations"
 
         public var id: String { rawValue }
     }
@@ -23,6 +24,7 @@ public struct SettingsView: View {
             Picker("", selection: $selectedTab) {
                 Label("General", systemImage: "gear").tag(SettingsTab.general)
                 Label("Repositories", systemImage: "folder.badge.gearshape").tag(SettingsTab.hiddenRepos)
+                Label("Herdr", systemImage: "cable.connector.horizontal").tag(SettingsTab.integrations)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 20)
@@ -37,9 +39,11 @@ public struct SettingsView: View {
                 GeneralSettingsTab(viewModel: viewModel)
             case .hiddenRepos:
                 RepositoriesSettingsTab(viewModel: viewModel)
+            case .integrations:
+                HerdrIntegrationsTab()
             }
         }
-        .frame(minWidth: 540, idealWidth: 580, minHeight: 400, idealHeight: 460)
+        .frame(minWidth: 560, idealWidth: 620, minHeight: 440, idealHeight: 500)
         .background(Color(NSColor.windowBackgroundColor))
     }
 }
@@ -410,5 +414,235 @@ private struct StatCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(8)
+    }
+}
+
+private struct HerdrIntegrationsTab: View {
+    @State private var herdrStatus = HerdrService.shared.getHerdrStatus()
+    @State private var integrations: [HerdrIntegrationInfo] = HerdrService.shared.getIntegrations()
+    @State private var actionMessage: String?
+    @State private var isActionError: Bool = false
+    @State private var isProcessing: Bool = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // Section 1: Herdr Daemon Status
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Herdr Terminal Workspace Manager")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Automated workspace and agent multiplexer running via Unix domain socket.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button("Refresh") {
+                            refreshAll()
+                        }
+                        .controlSize(.small)
+                    }
+
+                    HStack(spacing: 12) {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(herdrStatus.isRunning ? Color.green : Color.orange)
+                                .frame(width: 9, height: 9)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(herdrStatus.isRunning ? "Server Running" : "Server Not Detected")
+                                    .font(.system(size: 12, weight: .bold))
+                                if let ver = herdrStatus.version {
+                                    Text("Version: \(ver)")
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(8)
+
+                        if let socket = herdrStatus.socketPath {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("API Socket")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.secondary)
+                                Text(socket)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(8)
+                        }
+                    }
+                }
+
+                Divider()
+
+                // Section 2: Agent Hook Integrations
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Agent Lifecycle Hooks (\(integrations.count))")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Hooks report real-time agent lifecycle states (working, idle, blocked at prompts) to Herdr and miniOps.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+
+                        Button(action: installRecommendedHooks) {
+                            Label("Install Recommended", systemImage: "arrow.down.circle")
+                                .font(.system(size: 11))
+                        }
+                        .controlSize(.small)
+                        .disabled(isProcessing)
+                    }
+
+                    if let msg = actionMessage {
+                        HStack(spacing: 6) {
+                            Image(systemName: isActionError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                                .foregroundColor(isActionError ? .red : .green)
+                            Text(msg)
+                                .font(.system(size: 11))
+                                .foregroundColor(isActionError ? .red : .primary)
+                            Spacer()
+                            Button(action: { actionMessage = nil }) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(8)
+                        .background(isActionError ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
+                        .cornerRadius(6)
+                    }
+
+                    VStack(spacing: 6) {
+                        ForEach(integrations) { item in
+                            HStack(spacing: 10) {
+                                Circle()
+                                    .fill(item.isInstalled ? Color.green : Color.secondary.opacity(0.4))
+                                    .frame(width: 8, height: 8)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text(item.displayName)
+                                            .font(.system(size: 12, weight: .semibold))
+                                        Text("(\(item.target))")
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                    }
+
+                                    if let path = item.hookPath {
+                                        Text(path)
+                                            .font(.system(size: 9, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                }
+
+                                Spacer()
+
+                                Text(item.statusText)
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(item.isInstalled ? Color.green.opacity(0.15) : Color.secondary.opacity(0.15))
+                                    )
+                                    .foregroundColor(item.isInstalled ? .green : .secondary)
+
+                                if item.isInstalled {
+                                    Button(action: {
+                                        uninstallHook(target: item.target)
+                                    }) {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: 11))
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .foregroundColor(.secondary)
+                                    .help("Uninstall \(item.displayName) hook")
+                                    .disabled(isProcessing)
+                                } else {
+                                    Button("Install") {
+                                        installHook(target: item.target)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .disabled(isProcessing)
+                                }
+                            }
+                            .padding(10)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(8)
+                        }
+                    }
+                }
+
+                Spacer()
+            }
+            .padding(20)
+        }
+        .onAppear {
+            refreshAll()
+        }
+    }
+
+    private func refreshAll() {
+        herdrStatus = HerdrService.shared.getHerdrStatus()
+        integrations = HerdrService.shared.getIntegrations()
+    }
+
+    private func installHook(target: String) {
+        isProcessing = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let res = HerdrService.shared.installIntegration(target: target)
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                self.isActionError = !res.success
+                self.actionMessage = res.message
+                self.refreshAll()
+            }
+        }
+    }
+
+    private func uninstallHook(target: String) {
+        isProcessing = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let res = HerdrService.shared.uninstallIntegration(target: target)
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                self.isActionError = !res.success
+                self.actionMessage = res.message
+                self.refreshAll()
+            }
+        }
+    }
+
+    private func installRecommendedHooks() {
+        isProcessing = true
+        let targets = ["antigravity-cli", "claude", "codex", "copilot"]
+        DispatchQueue.global(qos: .userInitiated).async {
+            var messages: [String] = []
+            for t in targets {
+                let res = HerdrService.shared.installIntegration(target: t)
+                messages.append("\(t): \(res.success ? "installed" : "failed")")
+            }
+            DispatchQueue.main.async {
+                self.isProcessing = false
+                self.isActionError = false
+                self.actionMessage = messages.joined(separator: ", ")
+                self.refreshAll()
+            }
+        }
     }
 }
