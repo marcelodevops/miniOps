@@ -97,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         DispatchQueue.main.async {
             NSApp.activate(ignoringOtherApps: true)
-            if let window = NSApp.windows.first(where: { !($0 is NSStatusBarWindow) }) {
+            if let window = NSApp.windows.first(where: { $0.canBecomeKey && !NSStringFromClass(type(of: $0)).contains("StatusBar") }) {
                 window.makeKeyAndOrderFront(nil)
             }
         }
@@ -106,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         if !flag {
-            for window in sender.windows where !($0 is NSStatusBarWindow) {
+            for window in sender.windows where window.canBecomeKey && !NSStringFromClass(type(of: window)).contains("StatusBar") {
                 window.makeKeyAndOrderFront(nil)
             }
         }

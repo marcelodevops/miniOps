@@ -87,7 +87,7 @@ public final class WorkspaceViewModel: ObservableObject {
 
     private func performSelectRepo(_ repo: RepoInfo) {
         // Save current repo's layout before switching
-        if let current = selectedRepo {
+        if selectedRepo != nil {
             saveCurrentRepoLayout()
         }
 
