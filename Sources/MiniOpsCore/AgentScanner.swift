@@ -14,6 +14,8 @@ public final class AgentScanner: @unchecked Sendable {
     public init() {}
 
     public func scanAgents(repositories: [RepoInfo] = []) -> [AgentInfo] {
+        let herdrAgents = HerdrService.shared.fetchAgents()
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/ps")
         process.arguments = ["-axo", "pid=,etime=,state=,tty=,%cpu=,command="]
@@ -22,16 +24,19 @@ public final class AgentScanner: @unchecked Sendable {
         process.standardOutput = pipe
         process.standardError = Pipe()
 
+        var psAgents: [AgentInfo] = []
         do {
             try process.run()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
-            guard let output = String(data: data, encoding: .utf8) else { return [] }
-
-            return parsePsOutput(output, repositories: repositories)
+            if let output = String(data: data, encoding: .utf8) {
+                psAgents = parsePsOutput(output, repositories: repositories)
+            }
         } catch {
-            return []
+            psAgents = []
         }
+
+        return mergeHerdrAgents(herdrAgents, psAgents: psAgents, repositories: repositories)
     }
 
     public func parsePsOutput(_ output: String, repositories: [RepoInfo] = []) -> [AgentInfo] {
@@ -94,6 +99,103 @@ public final class AgentScanner: @unchecked Sendable {
                 return a.isWaitingForInput && !b.isWaitingForInput
             }
             return a.pid > b.pid
+        }
+    }
+
+    public func mergeHerdrAgents(
+        _ herdrAgents: [HerdrAgent],
+        psAgents: [AgentInfo],
+        repositories: [RepoInfo] = []
+    ) -> [AgentInfo] {
+        var combined: [AgentInfo] = []
+        var matchedPsPids: Set<Int> = []
+
+        for (idx, hAgent) in herdrAgents.enumerated() {
+            let toolName = mapHerdrToolName(hAgent.agent)
+            let isWaiting = (hAgent.agentStatus.lowercased() == "blocked")
+            let statusText: String
+            switch hAgent.agentStatus.lowercased() {
+            case "blocked": statusText = "waiting"
+            case "working": statusText = "running"
+            case "idle": statusText = "idle"
+            case "done": statusText = "done"
+            default: statusText = hAgent.agentStatus
+            }
+
+            let effectiveCwd = hAgent.foregroundCwd ?? hAgent.cwd
+            var matchedRepoName: String? = nil
+            var matchedRepoPath: String? = nil
+            for repo in repositories {
+                if effectiveCwd.hasPrefix(repo.path) {
+                    matchedRepoName = repo.name
+                    matchedRepoPath = repo.path
+                    break
+                }
+            }
+
+            // Try to correlate with a psAgent by tool and cwd
+            var correlatedPid = 10000 + idx
+            var correlatedCpu = 0.0
+            var correlatedElapsed = "Herdr (\(hAgent.agentStatus))"
+            if let match = psAgents.first(where: { !matchedPsPids.contains($0.pid) && $0.tool.lowercased().contains(hAgent.agent.lowercased()) && ($0.repoPath == matchedRepoPath || matchedRepoPath == nil) }) {
+                correlatedPid = match.pid
+                correlatedCpu = match.cpu
+                correlatedElapsed = match.elapsed
+                matchedPsPids.insert(match.pid)
+            }
+
+            combined.append(AgentInfo(
+                pid: correlatedPid,
+                tool: toolName,
+                status: statusText,
+                isWaitingForInput: isWaiting,
+                elapsed: correlatedElapsed,
+                cpu: correlatedCpu,
+                tty: hAgent.paneId,
+                repoName: matchedRepoName ?? URL(fileURLWithPath: effectiveCwd).lastPathComponent,
+                repoPath: matchedRepoPath ?? effectiveCwd,
+                command: hAgent.terminalTitle ?? hAgent.agent,
+                herdrPaneId: hAgent.paneId,
+                herdrWorkspaceId: hAgent.workspaceId,
+                herdrStatus: hAgent.agentStatus,
+                herdrTerminalTitle: hAgent.terminalTitle,
+                isHerdrManaged: true
+            ))
+        }
+
+        // Append remaining psAgents that weren't managed by Herdr
+        for psAgent in psAgents where !matchedPsPids.contains(psAgent.pid) {
+            combined.append(psAgent)
+        }
+
+        return combined.sorted { a, b in
+            if a.isWaitingForInput != b.isWaitingForInput {
+                return a.isWaitingForInput && !b.isWaitingForInput
+            }
+            if a.isHerdrManaged != b.isHerdrManaged {
+                return a.isHerdrManaged && !b.isHerdrManaged
+            }
+            return a.pid > b.pid
+        }
+    }
+
+    public func mapHerdrToolName(_ raw: String) -> String {
+        switch raw.lowercased() {
+        case "agy", "antigravity": return "Google Antigravity"
+        case "claude": return "Claude Code"
+        case "codex": return "OpenAI Codex"
+        case "copilot": return "GitHub Copilot"
+        case "cursor": return "Cursor IDE"
+        case "aider": return "Aider"
+        case "openclaw": return "OpenClaw"
+        case "devin": return "Devin"
+        case "droid": return "Factory Droid"
+        case "kimi": return "Kimi Code"
+        case "qwen": return "Qwen"
+        case "opencode": return "OpenCode"
+        case "hermes": return "Hermes"
+        case "grok": return "Grok"
+        default: return raw.capitalized
         }
     }
 
