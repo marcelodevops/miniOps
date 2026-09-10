@@ -68,24 +68,22 @@ public final class GitService: @unchecked Sendable {
         let branch = branchRes.status == 0 && !branchRes.stdout.isEmpty ? branchRes.stdout : "(detached)"
 
         // Status porcelain
-        let statusRes = runGit(args: ["status", "--porcelain=v1"], in: repoPath)
-        let statusLines = statusRes.stdout.components(separatedBy: "\n").filter { !$0.isEmpty }
-        let isDirty = !statusLines.isEmpty
+        let statusRes = runGit(args: ["status", "--porcelain=v1", "-z"], in: repoPath)
+        let records = statusRes.stdout.components(separatedBy: "\0")
+        let isDirty = records.contains { !$0.isEmpty }
 
         var changes: [GitFileChange] = []
-        for line in statusLines {
+        var recordIndex = 0
+        while recordIndex < records.count {
+            let line = records[recordIndex]
+            recordIndex += 1
             guard line.count >= 3 else { continue }
             let indexCode = line.prefix(1)
             let worktreeCode = line.dropFirst(1).prefix(1)
-            let pathPart = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-            
-            // Extract clean path if renamed: "old -> new"
-            let filePath: String
-            if pathPart.contains(" -> ") {
-                let parts = pathPart.components(separatedBy: " -> ")
-                filePath = parts.last ?? pathPart
-            } else {
-                filePath = pathPart
+            let filePath = String(line.dropFirst(3))
+            // In -z mode the destination precedes the separate source record.
+            if indexCode == "R" || indexCode == "C" || worktreeCode == "R" || worktreeCode == "C" {
+                recordIndex += 1
             }
 
             let isUntracked = (indexCode == "?" && worktreeCode == "?")
@@ -265,6 +263,9 @@ public final class GitService: @unchecked Sendable {
     }
 
     public func reconcile(repoPath: String, message: String = "reconciling latest changes", selectedPaths: [String]? = nil) -> GitOperationResult {
+        if let selectedPaths, selectedPaths.isEmpty {
+            return GitOperationResult(success: false, error: "No files selected to reconcile")
+        }
         do {
             return try lockManager.withRepoLock(repoPath: repoPath, action: "reconcile") {
                 let (_, isDirty, _, _, _) = getRepoStatus(repoPath: repoPath)

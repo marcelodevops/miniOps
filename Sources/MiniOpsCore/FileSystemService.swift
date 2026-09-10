@@ -48,7 +48,7 @@ public final class FileSystemService: @unchecked Sendable {
     }
 
     public func validatePathWithin(repoPath: String, filePath: String) -> URL? {
-        let repoURL = URL(fileURLWithPath: (repoPath as NSString).expandingTildeInPath).standardized
+        let repoURL = URL(fileURLWithPath: (repoPath as NSString).expandingTildeInPath).resolvingSymlinksInPath().standardized
         let fullURL: URL
         if filePath.hasPrefix("/") {
             fullURL = URL(fileURLWithPath: filePath).standardized
@@ -56,9 +56,20 @@ public final class FileSystemService: @unchecked Sendable {
             fullURL = repoURL.appendingPathComponent(filePath).standardized
         }
 
-        // Verify it does not escape repoURL
-        if fullURL.path.hasPrefix(repoURL.path) {
-            return fullURL
+        // Resolve the existing ancestor too: Foundation leaves missing leaf paths unresolved.
+        var ancestor = fullURL
+        var missingComponents: [String] = []
+        while !FileManager.default.fileExists(atPath: ancestor.path) && ancestor.path != "/" {
+            missingComponents.append(ancestor.lastPathComponent)
+            ancestor.deleteLastPathComponent()
+        }
+        var resolvedURL = ancestor.resolvingSymlinksInPath().standardized
+        for component in missingComponents.reversed() {
+            resolvedURL.appendPathComponent(component)
+        }
+        let prefix = repoURL.path.hasSuffix("/") ? repoURL.path : repoURL.path + "/"
+        if resolvedURL.path.hasPrefix(prefix) {
+            return resolvedURL
         }
         return nil
     }

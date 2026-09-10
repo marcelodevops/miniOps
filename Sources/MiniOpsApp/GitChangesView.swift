@@ -157,7 +157,7 @@ public struct GitChangesView: View {
                                 Text("Reconcile")
                             }
                         }
-                        .disabled(isCommitting)
+                        .disabled(isCommitting || selectedFilesForCommit.isEmpty)
                         .help("Stage, commit with 'reconciling latest changes', and push")
                     }
                 }
@@ -262,7 +262,7 @@ public struct GitChangesView: View {
         operationMessage = "Reconciling changes (commit & push)..."
         isErrorMessage = false
 
-        let selected = selectedFilesForCommit.isEmpty ? nil : Array(selectedFilesForCommit)
+        let selected = Array(selectedFilesForCommit)
         let msg = commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "reconciling latest changes" : commitMessage
 
         DispatchQueue.global(qos: .userInitiated).async {

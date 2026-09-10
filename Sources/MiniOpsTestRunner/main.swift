@@ -705,3 +705,28 @@ print("==================================================")
 if failedCount > 0 {
     exit(1)
 }
+
+// Regression coverage for empty selections, literal status names, and file boundaries.
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let names = ["café.txt", " leading.txt", "arrow -> name.txt", "line\nbreak.txt"]
+    for name in names {
+        try! "content".write(to: repoURL.appendingPathComponent(name), atomically: true, encoding: .utf8)
+    }
+    let service = GitService()
+    assertEqual(Set(service.getRepoStatus(repoPath: repoURL.path).changes.map { $0.path }), Set(names), "Status preserves literal filenames")
+    let result = service.reconcile(repoPath: repoURL.path, selectedPaths: [])
+    assert(!result.success && !result.partialSuccess, "Empty selection must not create a commit")
+    assert(runGit(args: ["log", "--oneline"], in: repoURL.path).contains("does not have any commits"), "No commit was created")
+    let fs = FileSystemService()
+    let sibling = repoURL.path + "-other/file.txt"
+    assert(fs.validatePathWithin(repoPath: repoURL.path, filePath: sibling) == nil, "Reject sibling prefix")
+    let outside = tempDir.appendingPathComponent("outside")
+    try! FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    try! FileManager.default.createSymbolicLink(at: repoURL.appendingPathComponent("escape"), withDestinationURL: outside)
+    assert(fs.validatePathWithin(repoPath: repoURL.path, filePath: "escape/file.txt") == nil, "Reject symlink escape")
+    assert(fs.validatePathWithin(repoPath: repoURL.path, filePath: names[0]) != nil, "Allow repository file")
+}
+print("Safety regression total: \(passedCount) passed, \(failedCount) failed")
+if failedCount > 0 { exit(1) }
