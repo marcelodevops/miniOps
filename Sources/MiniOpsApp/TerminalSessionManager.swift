@@ -58,9 +58,13 @@ public final class TerminalSessionManager: ObservableObject {
 
         let envList = env.map { "\($0.key)=\($0.value)" }
 
+        // Herdr mode launches (or re-attaches) a per-repo Herdr session instead of
+        // a plain login shell. Falls back to the shell when herdr is unavailable.
+        let launch = Self.launchCommand(for: normalized, shell: shell)
+
         terminal.startProcess(
-            executable: shell,
-            args: ["-l"],
+            executable: launch.executable,
+            args: launch.args,
             environment: envList,
             execName: nil,
             currentDirectory: normalized
@@ -68,6 +72,19 @@ public final class TerminalSessionManager: ObservableObject {
 
         sessions[normalized] = terminal
         return terminal
+    }
+
+    /// Session name derived from the repository so each repo re-attaches its own Herdr session.
+    public static func herdrSessionName(for repoPath: String) -> String {
+        HerdrService.sessionName(forRepoPath: repoPath)
+    }
+
+    static func launchCommand(for repoPath: String, shell: String) -> (executable: String, args: [String]) {
+        guard WorkspaceStateStore.shared.getIntegrationSettings().herdrModeEnabled,
+              let herdr = HerdrService.shared.findExecutable() else {
+            return (shell, ["-l"])
+        }
+        return (herdr, ["--session", herdrSessionName(for: repoPath)])
     }
 
     public func hasSession(for repoPath: String) -> Bool {
@@ -81,6 +98,13 @@ public final class TerminalSessionManager: ObservableObject {
             // SwiftTerm's LocalProcess does not expose a public killProcess,
             // but closing its PTY / sending exit terminates the child shell cleanly.
             term.send(txt: "exit\n")
+        }
+    }
+
+    /// Drops every cached session so the next terminal opens with the current launch mode.
+    public func resetAllSessions() {
+        for repoPath in sessions.keys {
+            closeSession(for: repoPath)
         }
     }
 }
