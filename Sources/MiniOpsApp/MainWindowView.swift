@@ -19,6 +19,8 @@ public struct MainWindowView: View {
     @State private var isShowingBatchGitSheet: Bool = false
     @State private var isPerformingGitAction: Bool = false
     @State private var gitActionBanner: String?
+    @State private var isShowingCommitPushPrompt: Bool = false
+    @State private var commitPushMessage: String = ""
 
     public init(viewModel: WorkspaceViewModel) {
         self.viewModel = viewModel
@@ -331,6 +333,17 @@ public struct MainWindowView: View {
         .onReceive(NotificationCenter.default.publisher(for: .miniOpsPush)) { _ in
             executePush()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .miniOpsAddCommitPush)) { _ in
+            promptForCommitAndPush()
+        }
+        .alert("Commit & Push", isPresented: $isShowingCommitPushPrompt) {
+            TextField("Commit message", text: $commitPushMessage)
+            Button("Cancel", role: .cancel) { }
+            Button("Commit & Push") { executeAddCommitPush() }
+                .disabled(commitPushMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("Stages every change in \(viewModel.selectedRepo?.name ?? "the repository"), commits it with this message and pushes the current branch.")
+        }
     }
 
     private func topToolbar(repo: RepoInfo) -> some View {
@@ -398,6 +411,16 @@ public struct MainWindowView: View {
                 }
                 .disabled(isPerformingGitAction)
                 .help("Push current branch to remote")
+
+                Button(action: promptForCommitAndPush) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "bolt.horizontal.circle")
+                        Text("Commit & Push")
+                    }
+                    .font(.system(size: 11))
+                }
+                .disabled(isPerformingGitAction || !repo.isDirty)
+                .help("Stage all changes, commit with a custom message and push — in one step (xgit)")
             }
 
             Divider().frame(height: 16)
@@ -492,6 +515,31 @@ public struct MainWindowView: View {
             DispatchQueue.main.async {
                 isPerformingGitAction = false
                 gitActionBanner = res.success ? (res.output.isEmpty ? "Pushed successfully." : res.output) : (res.error ?? "Push failed.")
+                viewModel.refreshCurrentRepoStatus()
+            }
+        }
+    }
+
+    private func promptForCommitAndPush() {
+        guard viewModel.selectedRepo != nil, !isPerformingGitAction else { return }
+        commitPushMessage = ""
+        isShowingCommitPushPrompt = true
+    }
+
+    private func executeAddCommitPush() {
+        guard let repo = viewModel.selectedRepo else { return }
+        let message = commitPushMessage
+        guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        isPerformingGitAction = true
+        gitActionBanner = "Staging, committing and pushing \(repo.name)..."
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let res = GitService.shared.addCommitPush(repoPath: repo.path, message: message)
+            DispatchQueue.main.async {
+                isPerformingGitAction = false
+                gitActionBanner = res.success ? res.output : (res.error ?? "Commit & push failed.")
+                commitPushMessage = ""
                 viewModel.refreshCurrentRepoStatus()
             }
         }

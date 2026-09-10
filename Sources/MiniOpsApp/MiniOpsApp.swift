@@ -67,6 +67,11 @@ struct MiniOpsApp: App {
                     NotificationCenter.default.post(name: .miniOpsPush, object: nil)
                 }
 
+                Button("Commit & Push...") {
+                    NotificationCenter.default.post(name: .miniOpsAddCommitPush, object: nil)
+                }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+
                 Button("Reconcile Latest Changes") {
                     NotificationCenter.default.post(name: .miniOpsReconcile, object: nil)
                 }
@@ -129,6 +134,7 @@ extension Notification.Name {
     static let miniOpsFetch = Notification.Name("miniOpsFetch")
     static let miniOpsPull = Notification.Name("miniOpsPull")
     static let miniOpsPush = Notification.Name("miniOpsPush")
+    static let miniOpsAddCommitPush = Notification.Name("miniOpsAddCommitPush")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
