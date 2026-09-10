@@ -36,6 +36,13 @@ public struct MainWindowView: View {
                         .font(.system(size: 11, weight: .bold))
                         .lineLimit(1)
                     Spacer()
+                    Button(action: { viewModel.isShowingCloneSheet = true }) {
+                        Image(systemName: "plus.rectangle.on.folder")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Clone or Create Repository (Cmd+Shift+N)")
+
                     Button(action: { viewModel.chooseWorkspaceDirectory() }) {
                         Image(systemName: "ellipsis.circle")
                             .font(.system(size: 11))
@@ -313,6 +320,18 @@ public struct MainWindowView: View {
             BatchGitSheetView(repos: viewModel.repositories, onComplete: {
                 viewModel.refreshRepositories()
             })
+        }
+        .sheet(isPresented: $viewModel.isShowingCloneSheet) {
+            CloneRepoSheetView(
+                workspacePath: viewModel.workspacePath,
+                onRepoCloned: { targetPath in
+                    viewModel.isShowingCloneSheet = false
+                    viewModel.handleRepoCloned(targetPath: targetPath)
+                },
+                onDismiss: {
+                    viewModel.isShowingCloneSheet = false
+                }
+            )
         }
     }
 

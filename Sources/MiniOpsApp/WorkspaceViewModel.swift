@@ -30,6 +30,7 @@ public final class WorkspaceViewModel: ObservableObject {
     private let agentScanner = AgentScanner.shared
 
     @Published public var isScanning = false
+    @Published public var isShowingCloneSheet: Bool = false
     private var scanGeneration = 0
     private var loadedFileContent: String = ""
 
@@ -287,6 +288,21 @@ public final class WorkspaceViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.isEditorCollapsed.toggle()
                 self?.saveCurrentRepoLayout()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: .miniOpsCloneRepo, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.isShowingCloneSheet = true
+            }
+        }
+    }
+
+    public func handleRepoCloned(targetPath: String) {
+        refreshRepositories()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self = self else { return }
+            if let repo = self.repositories.first(where: { $0.path == targetPath }) {
+                self.selectRepo(repo)
             }
         }
     }

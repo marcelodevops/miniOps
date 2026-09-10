@@ -29,6 +29,11 @@ struct MiniOpsApp: App {
                 }
                 .keyboardShortcut("o", modifiers: .command)
 
+                Button("Clone Repository...") {
+                    NotificationCenter.default.post(name: .miniOpsCloneRepo, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+
                 Button("Save File") {
                     NotificationCenter.default.post(name: .miniOpsSaveFile, object: nil)
                 }
@@ -94,6 +99,7 @@ extension Notification.Name {
     static let miniOpsRefreshGitStatus = Notification.Name("miniOpsRefreshGitStatus")
     static let miniOpsToggleTerminal = Notification.Name("miniOpsToggleTerminal")
     static let miniOpsToggleEditor = Notification.Name("miniOpsToggleEditor")
+    static let miniOpsCloneRepo = Notification.Name("miniOpsCloneRepo")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {

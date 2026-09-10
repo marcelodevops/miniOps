@@ -67,6 +67,11 @@ miniOps is structured into cleanly isolated layers:
 * **God Node Identification**: Ranks core architectural components and god nodes by degree centrality.
 * **Community Filtering & Search**: Explore modules grouped by community clusters and jump directly into the source file within the native code editor.
 
+### 10. Repository Cloning & Remote Creation (`Cmd+Shift+N`)
+* **Clone from GitHub Account**: Search and one-click clone remote repositories from your GitHub account via GitHub CLI (`gh`).
+* **Clone by URL / Shorthand**: Clone any repository by full URL or `owner/name` shorthand into your workspace with destination validation.
+* **Create & Clone Remote Repository**: Create new public or private GitHub repositories (with description and initial README) and immediately clone and checkout in the workspace.
+
 ---
 
 ## Keyboard Shortcuts
@@ -77,13 +82,13 @@ miniOps is structured into cleanly isolated layers:
 | `Cmd + J` | Toggle Embedded Terminal Pane |
 | `Cmd + S` | Save Current File in Editor |
 | `Cmd + B` | Open Branch Switcher & Creator |
+| `Cmd + Shift + N` | Clone or Create Remote Repository |
 | `Cmd + Shift + S` | Open Git Stash Manager |
 | `Cmd + Shift + W` | Open Git Worktree Manager |
 | `Cmd + Shift + B` | Open Batch Git Operations |
 | `Cmd + Shift + A` | Open Agent Inspector & Attention Queue |
 | `Cmd + Shift + T` | Open Task & Ticket Manager |
 | `Cmd + Shift + G` | Open Knowledge Graph Visualizer |
-| `Cmd + Shift + N` | Toggle Repository Notes Scratchpad |
 
 ---
 
