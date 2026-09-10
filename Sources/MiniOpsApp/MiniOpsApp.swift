@@ -23,15 +23,6 @@ struct MiniOpsApp: App {
         .commands {
             SidebarCommands()
 
-            CommandGroup(replacing: .appSettings) {
-                Button("Settings...") {
-                    sharedViewModel.isShowingSettingsSheet = true
-                    NotificationCenter.default.post(name: .miniOpsOpenSettings, object: nil)
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                }
-                .keyboardShortcut(",", modifiers: .command)
-            }
-
             CommandGroup(replacing: .newItem) {
                 Button("Open Workspace...") {
                     NotificationCenter.default.post(name: .miniOpsOpenWorkspace, object: nil)
