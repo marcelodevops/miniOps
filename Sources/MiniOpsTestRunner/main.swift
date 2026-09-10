@@ -1125,6 +1125,66 @@ do {
     assertEqual(HerdrService.sessionName(forRepoPath: "/"), "miniops", "Unusable folder names fall back to a default session")
 }
 
+// Test 25: Ticket Navigator Filtering and Path Resolution
+print("Test 25: Ticket Navigator Filtering and Path Resolution")
+do {
+    let scanner = TicketScanner.shared
+    let tickets = [
+        TicketInfo(key: "VSSD-101", summary: "Add namespace quota", statusCategory: "todo", isOpen: true),
+        TicketInfo(key: "VSSD-102", summary: "Rotate Istio certificate", statusCategory: "in_progress", isOpen: true),
+        TicketInfo(key: "TMPL-9", summary: "Archive old namespace", statusCategory: "done", isOpen: false)
+    ]
+
+    assertEqual(scanner.filter(tickets: tickets).count, 2, "Open-only filter hides completed tickets")
+    assertEqual(scanner.filter(tickets: tickets, openOnly: false).count, 3, "Disabling the open filter shows every ticket")
+
+    let byKey = scanner.filter(tickets: tickets, searchText: "vssd-102")
+    assertEqual(byKey.count, 1, "Search matches the ticket key case-insensitively")
+    assertEqual(byKey.first?.key, "VSSD-102", "Correct ticket matched by key")
+
+    let bySummary = scanner.filter(tickets: tickets, searchText: "istio")
+    assertEqual(bySummary.count, 1, "Search matches the ticket summary")
+
+    assertEqual(scanner.filter(tickets: tickets, searchText: "namespace").count, 1, "Closed tickets stay hidden while searching")
+    assertEqual(scanner.filter(tickets: tickets, searchText: "namespace", openOnly: false).count, 2, "Both namespace tickets match once closed ones are shown")
+    assertEqual(scanner.filter(tickets: tickets, searchText: "   ").count, 2, "A whitespace-only query is treated as no query")
+    assertEqual(scanner.filter(tickets: tickets, searchText: "nothing-matches").count, 0, "Unmatched query returns no tickets")
+
+    // Path resolution keeps ticket files confined to the selected repository.
+    assertEqual(
+        scanner.repoRelativePath(forTicketPath: "/Users/dev/repos/miniOps/tickets/VSSD-101.md", repoPath: "/Users/dev/repos/miniOps"),
+        "tickets/VSSD-101.md",
+        "Ticket inside the repository resolves to a relative path"
+    )
+    assertEqual(
+        scanner.repoRelativePath(forTicketPath: "/Users/dev/repos/miniOps/tickets/VSSD-101.md", repoPath: "/Users/dev/repos/miniOps/"),
+        "tickets/VSSD-101.md",
+        "Trailing slash on the repository path is handled"
+    )
+    assertEqual(
+        scanner.repoRelativePath(forTicketPath: "/Users/dev/repos/other/tickets/VSSD-101.md", repoPath: "/Users/dev/repos/miniOps"),
+        nil,
+        "Ticket in a different repository is rejected"
+    )
+    assertEqual(
+        scanner.repoRelativePath(forTicketPath: "/Users/dev/repos/miniOpsExtra/t.md", repoPath: "/Users/dev/repos/miniOps"),
+        nil,
+        "A sibling directory sharing the repository name prefix is rejected"
+    )
+    assertEqual(
+        scanner.repoRelativePath(forTicketPath: "/Users/dev/repos/miniOps", repoPath: "/Users/dev/repos/miniOps"),
+        nil,
+        "The repository root itself is not a ticket file"
+    )
+
+    // Feature branch naming stays stable for the navigator's branch action.
+    assertEqual(
+        scanner.makeFeatureBranchName(ticket: tickets[0]),
+        "feat/VSSD-101-add-namespace-quota",
+        "Feature branch name derives from the key and summary"
+    )
+}
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")
