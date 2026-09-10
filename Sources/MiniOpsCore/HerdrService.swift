@@ -115,6 +115,14 @@ public final class HerdrService: @unchecked Sendable {
         self.defaultSocketPath = "\(home)/.config/herdr/herdr.sock"
     }
 
+    /// Herdr session name for a repository: the folder name reduced to characters Herdr accepts.
+    public static func sessionName(forRepoPath repoPath: String) -> String {
+        let name = URL(fileURLWithPath: (repoPath as NSString).expandingTildeInPath).lastPathComponent
+        let sanitized = String(name.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "-" })
+        let trimmed = sanitized.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return trimmed.isEmpty ? "miniops" : trimmed
+    }
+
     public func findExecutable() -> String? {
         if let cached = cachedBinaryPath, FileManager.default.isExecutableFile(atPath: cached) {
             return cached
