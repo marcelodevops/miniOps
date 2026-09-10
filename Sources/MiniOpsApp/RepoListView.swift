@@ -57,7 +57,9 @@ public struct RepoListView: View {
                 }
             }
         }
-        .listStyle(.sidebar)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -86,6 +88,7 @@ public struct RepoListView: View {
                 .padding(.bottom, 4)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

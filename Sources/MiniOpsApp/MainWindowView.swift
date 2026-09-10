@@ -118,9 +118,9 @@ public struct MainWindowView: View {
                         }
                     )
                 }
-                .frame(minHeight: 180, idealHeight: 280, maxHeight: 320)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(minWidth: 240, idealWidth: 280, maxWidth: 350)
+            .frame(minWidth: 240, idealWidth: 280, maxWidth: 350, maxHeight: .infinity)
             .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 350)
         } detail: {
             // Main Stage
