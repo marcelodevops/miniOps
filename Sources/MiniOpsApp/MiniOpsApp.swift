@@ -100,6 +100,7 @@ extension Notification.Name {
     static let miniOpsToggleTerminal = Notification.Name("miniOpsToggleTerminal")
     static let miniOpsToggleEditor = Notification.Name("miniOpsToggleEditor")
     static let miniOpsCloneRepo = Notification.Name("miniOpsCloneRepo")
+    static let miniOpsOpenSettings = Notification.Name("miniOpsOpenSettings")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {

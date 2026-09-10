@@ -31,6 +31,8 @@ public final class WorkspaceViewModel: ObservableObject {
 
     @Published public var isScanning = false
     @Published public var isShowingCloneSheet: Bool = false
+    @Published public var isShowingSettingsSheet: Bool = false
+    @Published public var hiddenRepoPaths: Set<String> = []
     private var scanGeneration = 0
     private var loadedFileContent: String = ""
 
@@ -41,6 +43,7 @@ public final class WorkspaceViewModel: ObservableObject {
 
     public init() {
         let appState = stateStore.getAppState()
+        self.hiddenRepoPaths = stateStore.getHiddenRepoPaths()
         let initialWorkspace = appState.lastWorkspacePath ?? "~/repos"
         setWorkspace(path: initialWorkspace)
 
@@ -66,19 +69,27 @@ public final class WorkspaceViewModel: ObservableObject {
         let generation = scanGeneration
         let path = workspacePath
         isScanning = true
+        let customPaths = stateStore.getCustomRepoPaths()
         DispatchQueue.global(qos: .userInitiated).async { [scanner] in
-            let repos = scanner.scan(rootPath: path)
+            let allScanned = scanner.scan(rootPath: path, customPaths: customPaths)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.scanGeneration == generation else { return }
-                self.repositories = repos
+                self.hiddenRepoPaths = self.stateStore.getHiddenRepoPaths()
+                let visibleRepos = allScanned.filter { !self.hiddenRepoPaths.contains($0.path) }
+                self.repositories = visibleRepos
                 self.isScanning = false
                 if let current = self.selectedRepo,
-                   let updated = repos.first(where: { $0.path == current.path }) {
+                   let updated = visibleRepos.first(where: { $0.path == current.path }) {
                     self.selectedRepo = updated
-                } else if self.selectedRepo == nil {
+                } else if self.selectedRepo == nil || !visibleRepos.contains(where: { $0.path == self.selectedRepo?.path }) {
                     let saved = self.stateStore.getAppState().lastSelectedRepoPath
-                    if let repo = repos.first(where: { $0.path == saved }) ?? repos.first {
+                    if let repo = visibleRepos.first(where: { $0.path == saved }) ?? visibleRepos.first {
                         self.performSelectRepo(repo)
+                    } else {
+                        self.selectedRepo = nil
+                        self.selectedFilePath = nil
+                        self.fileContent = ""
+                        self.fileTree = nil
                     }
                 }
                 self.refreshAgents()
@@ -295,6 +306,11 @@ public final class WorkspaceViewModel: ObservableObject {
                 self?.isShowingCloneSheet = true
             }
         }
+        NotificationCenter.default.addObserver(forName: .miniOpsOpenSettings, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.isShowingSettingsSheet = true
+            }
+        }
     }
 
     public func handleRepoCloned(targetPath: String) {
@@ -305,5 +321,71 @@ public final class WorkspaceViewModel: ObservableObject {
                 self.selectRepo(repo)
             }
         }
+    }
+
+    public func hideRepo(_ repo: RepoInfo) {
+        stateStore.hideRepo(path: repo.path)
+        hiddenRepoPaths.insert(repo.path)
+        repositories.removeAll(where: { $0.path == repo.path })
+        if selectedRepo?.path == repo.path {
+            if let next = repositories.first {
+                performSelectRepo(next)
+            } else {
+                selectedRepo = nil
+                selectedFilePath = nil
+                fileContent = ""
+                fileTree = nil
+            }
+        }
+        refreshAgents()
+    }
+
+    public func unhideRepo(path: String) {
+        stateStore.unhideRepo(path: path)
+        hiddenRepoPaths.remove(path)
+        refreshRepositories()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self = self else { return }
+            if let repo = self.repositories.first(where: { $0.path == path }) {
+                self.selectRepo(repo)
+            }
+        }
+    }
+
+    public func unhideAllRepos() {
+        stateStore.unhideAllRepos()
+        hiddenRepoPaths.removeAll()
+        refreshRepositories()
+    }
+
+    @discardableResult
+    public func reimportRepo(path: String) -> Bool {
+        let expanded = (path as NSString).expandingTildeInPath
+        let gitURL = URL(fileURLWithPath: expanded).appendingPathComponent(".git")
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: gitURL.path, isDirectory: &isDir) else {
+            return false
+        }
+
+        // Unhide if was hidden
+        stateStore.unhideRepo(path: expanded)
+        hiddenRepoPaths.remove(expanded)
+
+        // If outside workspacePath root, register as custom repo
+        let workspaceURL = URL(fileURLWithPath: workspacePath).standardized
+        let repoURL = URL(fileURLWithPath: expanded).standardized
+        if !repoURL.path.hasPrefix(workspaceURL.path) {
+            stateStore.addCustomRepo(path: expanded)
+        }
+
+        refreshRepositories()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self = self else { return }
+            if let repo = self.repositories.first(where: { $0.path == expanded }) {
+                self.selectRepo(repo)
+            }
+        }
+        return true
     }
 }
