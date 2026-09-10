@@ -349,6 +349,15 @@ public struct MainWindowView: View {
                 isPresented: $viewModel.isShowingSettingsSheet
             )
         }
+        .onReceive(NotificationCenter.default.publisher(for: .miniOpsFetch)) { _ in
+            executeFetch()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .miniOpsPull)) { _ in
+            executePull()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .miniOpsPush)) { _ in
+            executePush()
+        }
     }
 
     private func topToolbar(repo: RepoInfo) -> some View {
@@ -385,7 +394,7 @@ public struct MainWindowView: View {
 
             Spacer()
 
-            // Quick Git Actions: Fetch & Pull
+            // Quick Git Actions: Fetch, Pull & Push
             HStack(spacing: 4) {
                 Button(action: executeFetch) {
                     HStack(spacing: 3) {
@@ -406,6 +415,16 @@ public struct MainWindowView: View {
                 }
                 .disabled(isPerformingGitAction)
                 .help("Pull current branch (--ff-only)")
+
+                Button(action: executePush) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.circle")
+                        Text("Push")
+                    }
+                    .font(.system(size: 11))
+                }
+                .disabled(isPerformingGitAction)
+                .help("Push current branch to remote")
             }
 
             Divider().frame(height: 16)
@@ -485,6 +504,21 @@ public struct MainWindowView: View {
             DispatchQueue.main.async {
                 isPerformingGitAction = false
                 gitActionBanner = res.success ? (res.output.isEmpty ? "Pulled successfully." : res.output) : (res.error ?? "Pull failed.")
+                viewModel.refreshCurrentRepoStatus()
+            }
+        }
+    }
+
+    private func executePush() {
+        guard let repo = viewModel.selectedRepo else { return }
+        isPerformingGitAction = true
+        gitActionBanner = "Pushing changes for \(repo.name)..."
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let res = GitService.shared.push(repoPath: repo.path)
+            DispatchQueue.main.async {
+                isPerformingGitAction = false
+                gitActionBanner = res.success ? (res.output.isEmpty ? "Pushed successfully." : res.output) : (res.error ?? "Push failed.")
                 viewModel.refreshCurrentRepoStatus()
             }
         }

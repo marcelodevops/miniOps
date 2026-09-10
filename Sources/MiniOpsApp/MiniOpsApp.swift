@@ -55,6 +55,18 @@ struct MiniOpsApp: App {
                 }
                 .keyboardShortcut(.return, modifiers: .command)
 
+                Button("Fetch") {
+                    NotificationCenter.default.post(name: .miniOpsFetch, object: nil)
+                }
+
+                Button("Pull") {
+                    NotificationCenter.default.post(name: .miniOpsPull, object: nil)
+                }
+
+                Button("Push") {
+                    NotificationCenter.default.post(name: .miniOpsPush, object: nil)
+                }
+
                 Button("Reconcile Latest Changes") {
                     NotificationCenter.default.post(name: .miniOpsReconcile, object: nil)
                 }
@@ -114,6 +126,9 @@ extension Notification.Name {
     static let miniOpsToggleEditor = Notification.Name("miniOpsToggleEditor")
     static let miniOpsCloneRepo = Notification.Name("miniOpsCloneRepo")
     static let miniOpsOpenSettings = Notification.Name("miniOpsOpenSettings")
+    static let miniOpsFetch = Notification.Name("miniOpsFetch")
+    static let miniOpsPull = Notification.Name("miniOpsPull")
+    static let miniOpsPush = Notification.Name("miniOpsPush")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
