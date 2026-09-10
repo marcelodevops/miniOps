@@ -877,6 +877,126 @@ do {
     assertEqual(visibleRepos.contains(where: { $0.path == extRepoDir.path }), true, "External repo remains")
 }
 
+// Test 21: Herdr Service, Socket API, and Agent Lifecycle Parsing
+print("Test 21: Herdr Service, Socket API, and Agent Lifecycle Parsing")
+do {
+    let herdr = HerdrService.shared
+
+    // Status parsing
+    let sampleStatus = """
+    client:
+      version: 0.8.2
+      channel: stable
+      protocol: 20
+
+    server:
+      status: running
+      version: 0.8.2
+      protocol: 20
+      socket: /Users/mac/.config/herdr/herdr.sock
+    """
+    let statusInfo = herdr.parseStatusOutput(sampleStatus)
+    assertEqual(statusInfo.isRunning, true, "Status reports server running")
+    assertEqual(statusInfo.version, "0.8.2", "Parsed server version")
+    assertEqual(statusInfo.socketPath, "/Users/mac/.config/herdr/herdr.sock", "Parsed socket path")
+
+    // Agent list JSON parsing
+    let sampleAgentJSON = """
+    {
+      "id": "cli:agent:list",
+      "result": {
+        "agents": [
+          {
+            "agent": "copilot",
+            "agent_status": "idle",
+            "cwd": "/Users/mac/repos/myops-os",
+            "pane_id": "w1:p2",
+            "workspace_id": "w1",
+            "tab_id": "w1:t2",
+            "terminal_title": "Review Work In Progress",
+            "focused": false
+          },
+          {
+            "agent": "agy",
+            "agent_status": "working",
+            "cwd": "/Users/mac/repos/miniOps",
+            "pane_id": "w3:p2",
+            "workspace_id": "w3",
+            "tab_id": "w3:t1",
+            "terminal_title": "Build MiniOps",
+            "focused": true
+          },
+          {
+            "agent": "claude",
+            "agent_status": "blocked",
+            "cwd": "/Users/mac/repos/myops-os",
+            "pane_id": "w2:p1",
+            "workspace_id": "w2",
+            "tab_id": "w2:t1",
+            "terminal_title": "Claude Prompt Confirmation",
+            "focused": false
+          }
+        ],
+        "type": "agent_list"
+      }
+    }
+    """.data(using: .utf8)!
+
+    let parsedAgents = herdr.parseAgentListJSON(sampleAgentJSON)
+    assertEqual(parsedAgents.count, 3, "Parsed 3 Herdr agents from JSON")
+    assertEqual(parsedAgents[0].agent, "copilot", "Agent 1 is copilot")
+    assertEqual(parsedAgents[1].agentStatus, "working", "Agent 2 is working")
+    assertEqual(parsedAgents[2].agentStatus, "blocked", "Agent 3 is blocked")
+    assertEqual(parsedAgents[2].paneId, "w2:p1", "Agent 3 paneId is w2:p1")
+
+    // Integration status output parsing
+    let sampleIntegrations = """
+    claude: current (v8) (/Users/mac/.claude/hooks/herdr-agent-state.sh)
+    codex: current (v8) (/Users/mac/.codex/herdr-agent-state.sh)
+    antigravity-cli: current (v2) (/Users/mac/.gemini/config/hooks/herdr-agent-state.sh)
+    cursor: not installed (/Users/mac/.cursor/herdr-agent-state.sh)
+    """
+    let integrations = herdr.parseIntegrationStatusOutput(sampleIntegrations)
+    assertEqual(integrations.count, 4, "Parsed 4 integrations")
+    assertEqual(integrations[0].target, "claude", "First integration is claude")
+    assertEqual(integrations[0].isInstalled, true, "claude is installed")
+    assertEqual(integrations[2].target, "antigravity-cli", "Third integration is antigravity-cli")
+    assertEqual(integrations[2].isInstalled, true, "antigravity-cli is installed")
+    assertEqual(integrations[3].target, "cursor", "Fourth integration is cursor")
+    assertEqual(integrations[3].isInstalled, false, "cursor is not installed")
+
+    // AgentScanner merging with Herdr
+    let scanner = AgentScanner.shared
+    let dummyRepo = RepoInfo(name: "miniOps", path: "/Users/mac/repos/miniOps", branch: "main", isDirty: false, ahead: 0, behind: 0)
+    let standalonePsAgent = AgentInfo(pid: 9999, tool: "Aider", status: "running", isWaitingForInput: false, elapsed: "01:00", cpu: 1.2, tty: "ttys004", repoName: "other", repoPath: "/other", command: "aider")
+
+    let merged = scanner.mergeHerdrAgents(parsedAgents, psAgents: [standalonePsAgent], repositories: [dummyRepo])
+    assertEqual(merged.count, 4, "Merged 3 Herdr agents + 1 standalone ps agent = 4 agents")
+
+    // Blocked Herdr agent (Claude) should be first because it is waiting for input
+    assertEqual(merged[0].tool, "Claude Code", "Waiting/blocked agent is sorted first")
+    assertEqual(merged[0].isWaitingForInput, true, "Blocked agent has isWaitingForInput = true")
+    assertEqual(merged[0].herdrStatus, "blocked", "Herdr status preserved")
+    assertEqual(merged[0].isHerdrManaged, true, "Marked as Herdr managed")
+
+    // Antigravity agent mapped correctly
+    let agyAgent = merged.first(where: { $0.tool == "Google Antigravity" })
+    assert(agyAgent != nil, "Google Antigravity agent present in merged list")
+    assertEqual(agyAgent?.herdrPaneId, "w3:p2", "Antigravity pane ID matched")
+    assertEqual(agyAgent?.repoName, "miniOps", "Antigravity matched repo miniOps")
+    assertEqual(agyAgent?.isHerdrManaged, true, "Antigravity is Herdr managed")
+
+    // Standalone agent preserved
+    let aiderAgent = merged.first(where: { $0.tool == "Aider" })
+    assert(aiderAgent != nil, "Standalone Aider agent preserved")
+    assertEqual(aiderAgent?.isHerdrManaged, false, "Standalone agent is not Herdr managed")
+
+    // Live executable test
+    if let exe = herdr.findExecutable() {
+        assert(FileManager.default.isExecutableFile(atPath: exe), "Found valid executable herdr")
+    }
+}
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")
