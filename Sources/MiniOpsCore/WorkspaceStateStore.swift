@@ -4,15 +4,33 @@ public struct PersistedAppState: Codable {
     public var lastWorkspacePath: String?
     public var lastSelectedRepoPath: String?
     public var repoStates: [String: RepoLayoutState]
+    public var hiddenRepoPaths: Set<String>
 
     public init(
         lastWorkspacePath: String? = nil,
         lastSelectedRepoPath: String? = nil,
-        repoStates: [String: RepoLayoutState] = [:]
+        repoStates: [String: RepoLayoutState] = [:],
+        hiddenRepoPaths: Set<String> = []
     ) {
         self.lastWorkspacePath = lastWorkspacePath
         self.lastSelectedRepoPath = lastSelectedRepoPath
         self.repoStates = repoStates
+        self.hiddenRepoPaths = hiddenRepoPaths
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case lastWorkspacePath
+        case lastSelectedRepoPath
+        case repoStates
+        case hiddenRepoPaths
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.lastWorkspacePath = try container.decodeIfPresent(String.self, forKey: .lastWorkspacePath)
+        self.lastSelectedRepoPath = try container.decodeIfPresent(String.self, forKey: .lastSelectedRepoPath)
+        self.repoStates = try container.decodeIfPresent([String: RepoLayoutState].self, forKey: .repoStates) ?? [:]
+        self.hiddenRepoPaths = try container.decodeIfPresent(Set<String>.self, forKey: .hiddenRepoPaths) ?? []
     }
 }
 
@@ -64,6 +82,31 @@ public final class WorkspaceStateStore: @unchecked Sendable {
             cachedState.lastWorkspacePath = path
             persistToDisk()
         }
+    }
+
+    public func hideRepo(path: String) {
+        queue.sync {
+            cachedState.hiddenRepoPaths.insert(path)
+            persistToDisk()
+        }
+    }
+
+    public func unhideRepo(path: String) {
+        queue.sync {
+            cachedState.hiddenRepoPaths.remove(path)
+            persistToDisk()
+        }
+    }
+
+    public func unhideAllRepos() {
+        queue.sync {
+            cachedState.hiddenRepoPaths.removeAll()
+            persistToDisk()
+        }
+    }
+
+    public func getHiddenRepoPaths() -> Set<String> {
+        queue.sync { cachedState.hiddenRepoPaths }
     }
 
     private func persistToDisk() {
