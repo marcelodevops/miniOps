@@ -94,6 +94,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NotificationService.shared.requestAuthorization()
+
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            if let window = NSApp.windows.first(where: { !($0 is NSStatusBarWindow) }) {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        if !flag {
+            for window in sender.windows where !($0 is NSStatusBarWindow) {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+        return true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

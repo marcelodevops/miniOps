@@ -56,4 +56,7 @@ cat << 'PLIST' > "$CONTENTS_DIR/Info.plist"
 </plist>
 PLIST
 
-echo "==> Successfully created $APP_DIR"
+echo "==> Code-signing application bundle..."
+codesign --force --deep --sign - "$APP_DIR"
+
+echo "==> Successfully created and signed $APP_DIR"

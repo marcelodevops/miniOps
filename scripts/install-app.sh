@@ -67,6 +67,7 @@ if [ -d "$TARGET_APP" ]; then
 fi
 
 cp -R "$APP_SOURCE" "$TARGET_APP"
+codesign --force --deep --sign - "$TARGET_APP"
 
 # Remove quarantine attribute if present
 xattr -d com.apple.quarantine "$TARGET_APP" 2>/dev/null || true

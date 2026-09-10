@@ -24,6 +24,7 @@ STAGE_DIR="$(mktemp -d /tmp/miniOps-dmg-stage.XXXXXX)"
 trap 'rm -rf "$STAGE_DIR"' EXIT
 
 cp -R "$APP_PATH" "$STAGE_DIR/${APP_NAME}.app"
+codesign --force --deep --sign - "$STAGE_DIR/${APP_NAME}.app"
 ln -s /Applications "$STAGE_DIR/Applications"
 
 # Set volume icon if AppIcon.icns is available
