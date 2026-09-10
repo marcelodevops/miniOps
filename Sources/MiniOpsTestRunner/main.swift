@@ -785,7 +785,99 @@ do {
     assertEqual(badDestCreate.success, false, "Create remote rejects non-existent destination directory")
 }
 
+// Test 20: Repository Hiding, Persistence, and Settings Re-import
+print("Test 20: Repository Hiding, Persistence, and Settings Re-import")
+do {
+    let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).resolvingSymlinksInPath().appendingPathComponent("miniOps-hidden-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let stateFile = tempDir.appendingPathComponent("state.json")
+    let stateStore = WorkspaceStateStore(customStorageURL: stateFile)
+
+    // Initially empty
+    assertEqual(stateStore.getHiddenRepoPaths().count, 0, "Initially no hidden repos")
+    assertEqual(stateStore.getCustomRepoPaths().count, 0, "Initially no custom repos")
+
+    // Hide repos
+    let repoPathA = tempDir.appendingPathComponent("repoA").resolvingSymlinksInPath().path
+    let repoPathB = tempDir.appendingPathComponent("repoB").resolvingSymlinksInPath().path
+    stateStore.hideRepo(path: repoPathA)
+    stateStore.hideRepo(path: repoPathB)
+
+    assertEqual(stateStore.getHiddenRepoPaths().count, 2, "Two repos hidden")
+    assert(stateStore.getHiddenRepoPaths().contains(repoPathA), "Hidden repos contains repoA")
+    assert(stateStore.getHiddenRepoPaths().contains(repoPathB), "Hidden repos contains repoB")
+
+    // Verify persistence across store reloads
+    let reloadedStore = WorkspaceStateStore(customStorageURL: stateFile)
+    assertEqual(reloadedStore.getHiddenRepoPaths().count, 2, "Reloaded store persists hidden repos")
+    assert(reloadedStore.getHiddenRepoPaths().contains(repoPathA), "Reloaded store contains repoA")
+
+    // Unhide one repo
+    stateStore.unhideRepo(path: repoPathA)
+    assertEqual(stateStore.getHiddenRepoPaths().count, 1, "Unhide leaves one repo")
+    assertEqual(stateStore.getHiddenRepoPaths().contains(repoPathA), false, "repoA is no longer hidden")
+    assertEqual(stateStore.getHiddenRepoPaths().contains(repoPathB), true, "repoB is still hidden")
+
+    // Unhide all
+    stateStore.unhideAllRepos()
+    assertEqual(stateStore.getHiddenRepoPaths().count, 0, "Unhide all clears all hidden repos")
+
+    // Custom repo paths
+    let customPath = tempDir.appendingPathComponent("external-repo").resolvingSymlinksInPath().path
+    stateStore.addCustomRepo(path: customPath)
+    assertEqual(stateStore.getCustomRepoPaths().contains(customPath), true, "Custom repo added")
+
+    let reloadedCustomStore = WorkspaceStateStore(customStorageURL: stateFile)
+    assertEqual(reloadedCustomStore.getCustomRepoPaths().contains(customPath), true, "Custom repo persisted across reloads")
+
+    stateStore.removeCustomRepo(path: customPath)
+    assertEqual(stateStore.getCustomRepoPaths().contains(customPath), false, "Custom repo removed")
+
+    // WorkspaceScanner integration
+    let wsDir = tempDir.appendingPathComponent("workspace").resolvingSymlinksInPath()
+    let repo1Dir = wsDir.appendingPathComponent("project1").resolvingSymlinksInPath()
+    let repo2Dir = wsDir.appendingPathComponent("project2").resolvingSymlinksInPath()
+    let extRepoDir = tempDir.appendingPathComponent("external-project").resolvingSymlinksInPath()
+
+    try! FileManager.default.createDirectory(at: repo1Dir, withIntermediateDirectories: true)
+    try! FileManager.default.createDirectory(at: repo2Dir, withIntermediateDirectories: true)
+    try! FileManager.default.createDirectory(at: extRepoDir, withIntermediateDirectories: true)
+
+    _ = runGit(args: ["init", "-b", "main"], in: repo1Dir.path)
+    _ = runGit(args: ["init", "-b", "main"], in: repo2Dir.path)
+    _ = runGit(args: ["init", "-b", "main"], in: extRepoDir.path)
+
+    let scanner = WorkspaceScanner.shared
+
+    // Direct inspection
+    let inspected = scanner.inspectRepo(path: repo1Dir.path)
+    assert(inspected != nil, "inspectRepo finds valid git repo")
+    assertEqual(inspected?.name, "project1", "inspected repo has correct name")
+
+    let nonGit = scanner.inspectRepo(path: tempDir.path)
+    assert(nonGit == nil, "inspectRepo returns nil for non-git directory")
+
+    // Scan workspace
+    let wsRepos = scanner.scan(rootPath: wsDir.path)
+    assertEqual(wsRepos.count, 2, "Workspace scan finds 2 repos")
+
+    // Scan with custom external repo
+    let wsReposWithCustom = scanner.scan(rootPath: wsDir.path, customPaths: [extRepoDir.path])
+    assertEqual(wsReposWithCustom.count, 3, "Scan includes custom external repo")
+    assert(wsReposWithCustom.contains(where: { $0.path == extRepoDir.path }), "Contains external repo")
+
+    // Filter hidden repos
+    let hiddenSet: Set<String> = [repo1Dir.path]
+    let visibleRepos = wsReposWithCustom.filter { !hiddenSet.contains($0.path) }
+    assertEqual(visibleRepos.count, 2, "Hidden repo is filtered out from visible list")
+    assertEqual(visibleRepos.contains(where: { $0.path == repo1Dir.path }), false, "Hidden repo is excluded")
+    assertEqual(visibleRepos.contains(where: { $0.path == repo2Dir.path }), true, "Non-hidden repo remains")
+    assertEqual(visibleRepos.contains(where: { $0.path == extRepoDir.path }), true, "External repo remains")
+}
+
 print("==================================================")
-print("Complete Full Clone & Remote Repo Test Suite: \(passedCount) passed, \(failedCount) failed")
+print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")
 if failedCount > 0 { exit(1) }
