@@ -91,6 +91,12 @@ miniOps is structured into cleanly isolated layers:
 * **Non-secret Fields**: The Jira site URL and email plus the GitHub username are persisted with the rest of the app state so they can be edited without a Keychain prompt.
 * **Masked Status**: Stored tokens are only ever displayed masked (last four characters) and can be cleared individually.
 
+### 14. Jira Ticket Navigator (Sidebar)
+* **Sidebar Panel**: A collapsible ticket list sits directly below the repositories tree, so tickets and repositories share one navigator.
+* **Search & Filter**: Find tickets by key or summary, and toggle whether completed tickets are shown.
+* **Open Ticket Files**: Click a ticket to open its local markdown file in the editor. Tickets stored outside the selected repository are rejected rather than mis-resolved.
+* **Create Feature Branch**: Hover a ticket (or use its context menu) to create the `feat/KEY-slug` branch without leaving the sidebar.
+
 ---
 
 ## Keyboard Shortcuts
