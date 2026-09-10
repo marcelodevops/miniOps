@@ -12,11 +12,9 @@ public final class WorkspaceScanner: @unchecked Sendable {
         self.gitService = gitService
     }
 
-    public func scan(rootPath: String) -> [RepoInfo] {
+    public func scan(rootPath: String, customPaths: Set<String> = []) -> [RepoInfo] {
         let rootURL = URL(fileURLWithPath: (rootPath as NSString).expandingTildeInPath).standardized
-        guard let items = try? FileManager.default.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
-            return []
-        }
+        let items = (try? FileManager.default.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
 
         var repos: [RepoInfo] = []
 
@@ -56,7 +54,27 @@ public final class WorkspaceScanner: @unchecked Sendable {
             }
         }
 
+        // Add any custom imported paths that aren't already included
+        for customPath in customPaths.sorted() {
+            let expanded = (customPath as NSString).expandingTildeInPath
+            if !repos.contains(where: { $0.path == expanded }) {
+                if let customRepo = inspectRepo(path: expanded, group: "Imported") {
+                    repos.append(customRepo)
+                }
+            }
+        }
+
         return repos
+    }
+
+    public func inspectRepo(path: String, group: String? = nil) -> RepoInfo? {
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardized
+        let gitURL = url.appendingPathComponent(".git")
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: gitURL.path, isDirectory: &isDir) else {
+            return nil
+        }
+        return makeRepoRecord(url: url, group: group)
     }
 
     private func makeRepoRecord(url: URL, group: String?) -> RepoInfo {

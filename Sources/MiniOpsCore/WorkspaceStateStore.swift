@@ -5,17 +5,20 @@ public struct PersistedAppState: Codable {
     public var lastSelectedRepoPath: String?
     public var repoStates: [String: RepoLayoutState]
     public var hiddenRepoPaths: Set<String>
+    public var customRepoPaths: Set<String>
 
     public init(
         lastWorkspacePath: String? = nil,
         lastSelectedRepoPath: String? = nil,
         repoStates: [String: RepoLayoutState] = [:],
-        hiddenRepoPaths: Set<String> = []
+        hiddenRepoPaths: Set<String> = [],
+        customRepoPaths: Set<String> = []
     ) {
         self.lastWorkspacePath = lastWorkspacePath
         self.lastSelectedRepoPath = lastSelectedRepoPath
         self.repoStates = repoStates
         self.hiddenRepoPaths = hiddenRepoPaths
+        self.customRepoPaths = customRepoPaths
     }
 
     enum CodingKeys: String, CodingKey {
@@ -23,6 +26,7 @@ public struct PersistedAppState: Codable {
         case lastSelectedRepoPath
         case repoStates
         case hiddenRepoPaths
+        case customRepoPaths
     }
 
     public init(from decoder: Decoder) throws {
@@ -31,6 +35,7 @@ public struct PersistedAppState: Codable {
         self.lastSelectedRepoPath = try container.decodeIfPresent(String.self, forKey: .lastSelectedRepoPath)
         self.repoStates = try container.decodeIfPresent([String: RepoLayoutState].self, forKey: .repoStates) ?? [:]
         self.hiddenRepoPaths = try container.decodeIfPresent(Set<String>.self, forKey: .hiddenRepoPaths) ?? []
+        self.customRepoPaths = try container.decodeIfPresent(Set<String>.self, forKey: .customRepoPaths) ?? []
     }
 }
 
@@ -107,6 +112,25 @@ public final class WorkspaceStateStore: @unchecked Sendable {
 
     public func getHiddenRepoPaths() -> Set<String> {
         queue.sync { cachedState.hiddenRepoPaths }
+    }
+
+    public func addCustomRepo(path: String) {
+        queue.sync {
+            cachedState.customRepoPaths.insert(path)
+            cachedState.hiddenRepoPaths.remove(path)
+            persistToDisk()
+        }
+    }
+
+    public func removeCustomRepo(path: String) {
+        queue.sync {
+            cachedState.customRepoPaths.remove(path)
+            persistToDisk()
+        }
+    }
+
+    public func getCustomRepoPaths() -> Set<String> {
+        queue.sync { cachedState.customRepoPaths }
     }
 
     private func persistToDisk() {
