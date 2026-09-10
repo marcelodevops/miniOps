@@ -46,6 +46,16 @@ public final class TerminalSessionManager: ObservableObject {
         env["MYOPS_TERMINAL"] = "1"
         env["TERM"] = "xterm-256color"
         env["LANG"] = "en_US.UTF-8"
+
+        // Strip outer multiplexer / parent pane variables so embedded terminal
+        // runs as a clean top-level interactive shell session
+        env.removeValue(forKey: "HERDR_ENV")
+        env.removeValue(forKey: "HERDR_PANE_ID")
+        env.removeValue(forKey: "HERDR_WORKSPACE_ID")
+        env.removeValue(forKey: "HERDR_TAB_ID")
+        env.removeValue(forKey: "HERDR_CLIENT_SOCKET_PATH")
+        env.removeValue(forKey: "HERDR_STARTUP_CWD")
+
         let envList = env.map { "\($0.key)=\($0.value)" }
 
         terminal.startProcess(
