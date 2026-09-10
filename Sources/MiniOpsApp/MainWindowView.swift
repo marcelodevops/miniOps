@@ -21,6 +21,7 @@ public struct MainWindowView: View {
     @State private var gitActionBanner: String?
     @State private var isShowingCommitPushPrompt: Bool = false
     @State private var commitPushMessage: String = ""
+    @State private var isTicketNavigatorExpanded: Bool = true
 
     public init(viewModel: WorkspaceViewModel) {
         self.viewModel = viewModel
@@ -121,6 +122,25 @@ public struct MainWindowView: View {
                     )
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Divider()
+
+                // Jira Tickets Navigator
+                TicketNavigatorView(
+                    tickets: viewModel.tickets,
+                    selectedRepoPath: viewModel.selectedRepo?.path,
+                    isExpanded: $isTicketNavigatorExpanded,
+                    onSelectTicket: { ticket in
+                        viewModel.openTicket(ticket)
+                    },
+                    onCreateBranch: { ticket in
+                        viewModel.createBranchForTicket(ticket)
+                    },
+                    onRefresh: {
+                        viewModel.refreshTickets()
+                    }
+                )
+                .background(Color(NSColor.controlBackgroundColor).opacity(0.35))
             }
             .frame(minWidth: 240, idealWidth: 280, maxWidth: 350, maxHeight: .infinity)
             .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 350)
@@ -250,6 +270,7 @@ public struct MainWindowView: View {
                                 )
                             }
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         SplitWorkspaceCanvasView(
                             repoPath: repo.path,
