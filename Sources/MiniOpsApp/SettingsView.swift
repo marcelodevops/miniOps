@@ -9,6 +9,7 @@ public struct SettingsView: View {
     public enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "General"
         case hiddenRepos = "Repositories"
+        case credentials = "Credentials"
         case integrations = "Integrations"
 
         public var id: String { rawValue }
@@ -24,6 +25,7 @@ public struct SettingsView: View {
             Picker("", selection: $selectedTab) {
                 Label("General", systemImage: "gear").tag(SettingsTab.general)
                 Label("Repositories", systemImage: "folder.badge.gearshape").tag(SettingsTab.hiddenRepos)
+                Label("Credentials", systemImage: "key.fill").tag(SettingsTab.credentials)
                 Label("Herdr", systemImage: "cable.connector.horizontal").tag(SettingsTab.integrations)
             }
             .pickerStyle(.segmented)
@@ -39,6 +41,8 @@ public struct SettingsView: View {
                 GeneralSettingsTab(viewModel: viewModel)
             case .hiddenRepos:
                 RepositoriesSettingsTab(viewModel: viewModel)
+            case .credentials:
+                CredentialsSettingsTab()
             case .integrations:
                 HerdrIntegrationsTab()
             }
@@ -417,12 +421,218 @@ private struct StatCard: View {
     }
 }
 
+private struct CredentialsSettingsTab: View {
+    @State private var jiraBaseURL: String = ""
+    @State private var jiraEmail: String = ""
+    @State private var jiraToken: String = ""
+    @State private var githubUsername: String = ""
+    @State private var githubToken: String = ""
+    @State private var storedJiraToken: String?
+    @State private var storedGitHubToken: String?
+    @State private var statusMessage: String?
+    @State private var isStatusError: Bool = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("API Credentials")
+                        .font(.system(size: 13, weight: .bold))
+                    Text("Tokens are stored in the macOS Keychain. Only the host, email and username are written to the miniOps state file.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+
+                if let statusMessage {
+                    HStack(spacing: 6) {
+                        Image(systemName: isStatusError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                            .foregroundColor(isStatusError ? .red : .green)
+                        Text(statusMessage)
+                            .font(.system(size: 11))
+                            .foregroundColor(isStatusError ? .red : .primary)
+                        Spacer()
+                        Button(action: { self.statusMessage = nil }) {
+                            Image(systemName: "xmark").font(.system(size: 10))
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .padding(8)
+                    .background(isStatusError ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
+                    .cornerRadius(6)
+                }
+
+                // Jira
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "ticket")
+                            .foregroundColor(.accentColor)
+                        Text("Jira")
+                            .font(.system(size: 12, weight: .bold))
+                        Spacer()
+                        CredentialBadge(storedToken: storedJiraToken)
+                    }
+
+                    LabeledField(label: "Site URL", placeholder: "https://your-org.atlassian.net") {
+                        TextField("https://your-org.atlassian.net", text: $jiraBaseURL)
+                    }
+                    LabeledField(label: "Email", placeholder: "you@example.com") {
+                        TextField("you@example.com", text: $jiraEmail)
+                    }
+                    LabeledField(label: "API Token", placeholder: "Atlassian API token") {
+                        SecureField(storedJiraToken == nil ? "Atlassian API token" : "Enter a new token to replace the stored one", text: $jiraToken)
+                    }
+
+                    HStack {
+                        Button("Save Jira Credentials") { saveJira() }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                        Button("Clear Token") { clearToken(.jira) }
+                            .controlSize(.small)
+                            .disabled(storedJiraToken == nil)
+                        Spacer()
+                    }
+                }
+                .padding(12)
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(8)
+
+                // GitHub
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left.forwardslash.chevron.right")
+                            .foregroundColor(.accentColor)
+                        Text("GitHub")
+                            .font(.system(size: 12, weight: .bold))
+                        Spacer()
+                        CredentialBadge(storedToken: storedGitHubToken)
+                    }
+
+                    LabeledField(label: "Username", placeholder: "octocat") {
+                        TextField("octocat", text: $githubUsername)
+                    }
+                    LabeledField(label: "Personal Access Token", placeholder: "ghp_…") {
+                        SecureField(storedGitHubToken == nil ? "ghp_…" : "Enter a new token to replace the stored one", text: $githubToken)
+                    }
+
+                    HStack {
+                        Button("Save GitHub Credentials") { saveGitHub() }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                        Button("Clear Token") { clearToken(.github) }
+                            .controlSize(.small)
+                            .disabled(storedGitHubToken == nil)
+                        Spacer()
+                    }
+                }
+                .padding(12)
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(8)
+
+                Spacer()
+            }
+            .padding(20)
+        }
+        .onAppear { load() }
+    }
+
+    private func load() {
+        let settings = WorkspaceStateStore.shared.getIntegrationSettings()
+        jiraBaseURL = settings.jiraBaseURL
+        jiraEmail = settings.jiraEmail
+        githubUsername = settings.githubUsername
+        storedJiraToken = CredentialStore.shared.maskedSecret(for: .jira)
+        storedGitHubToken = CredentialStore.shared.maskedSecret(for: .github)
+    }
+
+    private func persistNonSecrets() {
+        var settings = WorkspaceStateStore.shared.getIntegrationSettings()
+        settings.jiraBaseURL = jiraBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.jiraEmail = jiraEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.githubUsername = githubUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        WorkspaceStateStore.shared.saveIntegrationSettings(settings)
+    }
+
+    private func saveJira() {
+        persistNonSecrets()
+        if jiraToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            report("Jira site and email saved. Existing token left unchanged.", isError: false)
+        } else if CredentialStore.shared.saveSecret(jiraToken, for: .jira) {
+            report("Jira credentials saved to the Keychain.", isError: false)
+        } else {
+            report("Could not write the Jira token to the Keychain.", isError: true)
+        }
+        jiraToken = ""
+        load()
+    }
+
+    private func saveGitHub() {
+        persistNonSecrets()
+        if githubToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            report("GitHub username saved. Existing token left unchanged.", isError: false)
+        } else if CredentialStore.shared.saveSecret(githubToken, for: .github) {
+            report("GitHub credentials saved to the Keychain.", isError: false)
+        } else {
+            report("Could not write the GitHub token to the Keychain.", isError: true)
+        }
+        githubToken = ""
+        load()
+    }
+
+    private func clearToken(_ account: CredentialAccount) {
+        if CredentialStore.shared.deleteSecret(for: account) {
+            report("\(account.displayName) token removed from the Keychain.", isError: false)
+        } else {
+            report("Could not remove the \(account.displayName) token.", isError: true)
+        }
+        load()
+    }
+
+    private func report(_ message: String, isError: Bool) {
+        statusMessage = message
+        isStatusError = isError
+    }
+}
+
+private struct CredentialBadge: View {
+    let storedToken: String?
+
+    var body: some View {
+        Text(storedToken ?? "No token stored")
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule().fill(storedToken == nil ? Color.secondary.opacity(0.15) : Color.green.opacity(0.15))
+            )
+            .foregroundColor(storedToken == nil ? .secondary : .green)
+    }
+}
+
+private struct LabeledField<Content: View>: View {
+    let label: String
+    let placeholder: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .frame(width: 150, alignment: .leading)
+            content
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11))
+        }
+    }
+}
+
 private struct HerdrIntegrationsTab: View {
     @State private var herdrStatus = HerdrService.shared.getHerdrStatus()
     @State private var integrations: [HerdrIntegrationInfo] = HerdrService.shared.getIntegrations()
     @State private var actionMessage: String?
     @State private var isActionError: Bool = false
     @State private var isProcessing: Bool = false
+    @State private var herdrModeEnabled: Bool = WorkspaceStateStore.shared.getIntegrationSettings().herdrModeEnabled
 
     var body: some View {
         ScrollView {
@@ -485,7 +695,44 @@ private struct HerdrIntegrationsTab: View {
 
                 Divider()
 
-                // Section 2: Agent Hook Integrations
+                // Section 2: Herdr Mode
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: $herdrModeEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Herdr Mode")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("Open a Herdr session in the embedded terminal by default instead of a plain login shell. Each repository attaches its own session named after the repository.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .onChange(of: herdrModeEnabled) { newValue in
+                        WorkspaceStateStore.shared.setHerdrModeEnabled(newValue)
+                        // Existing terminals keep their current process; drop them so the
+                        // next terminal that opens uses the new launch mode.
+                        TerminalSessionManager.shared.resetAllSessions()
+                        isActionError = false
+                        actionMessage = newValue
+                            ? "Herdr mode enabled. Terminals opened from now on attach a Herdr session."
+                            : "Herdr mode disabled. Terminals opened from now on use your login shell."
+                    }
+
+                    if herdrModeEnabled && HerdrService.shared.findExecutable() == nil {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text("The herdr executable was not found — terminals fall back to your login shell.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+
+                Divider()
+
+                // Section 3: Agent Hook Integrations
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -600,6 +847,7 @@ private struct HerdrIntegrationsTab: View {
     private func refreshAll() {
         herdrStatus = HerdrService.shared.getHerdrStatus()
         integrations = HerdrService.shared.getIntegrations()
+        herdrModeEnabled = WorkspaceStateStore.shared.getIntegrationSettings().herdrModeEnabled
     }
 
     private func installHook(target: String) {
