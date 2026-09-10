@@ -84,6 +84,12 @@ miniOps is structured into cleanly isolated layers:
 * **Jump in Terminal**: One-click focus (`herdr workspace focus`, `herdr agent focus`) brings your terminal/Ghostty window to the active pane.
 * **Live Terminal Buffer Inspection**: Inspect real-time terminal output snapshots directly inside miniOps without switching windows.
 * **Hook Installer in Settings**: Manage and install Herdr lifecycle hooks for Antigravity, Claude Code, Codex, Copilot, and other supported tools.
+* **Herdr Mode**: Toggle in Settings → Herdr to make the embedded terminal open a Herdr session by default. Each repository attaches its own session named after the repository, and terminals fall back to your login shell if `herdr` is not installed.
+
+### 13. Jira & GitHub Credentials (`Cmd+,` → Credentials)
+* **Keychain-backed Tokens**: The Jira API token and the GitHub personal access token are stored in the macOS Keychain, never in the miniOps state file.
+* **Non-secret Fields**: The Jira site URL and email plus the GitHub username are persisted with the rest of the app state so they can be edited without a Keychain prompt.
+* **Masked Status**: Stored tokens are only ever displayed masked (last four characters) and can be cleared individually.
 
 ---
 
@@ -91,7 +97,7 @@ miniOps is structured into cleanly isolated layers:
 
 | Shortcut | Action |
 | :--- | :--- |
-| `Cmd + ,` | Open Settings (General, Hidden Repos, Re-import) |
+| `Cmd + ,` | Open Settings (General, Hidden Repos, Credentials, Herdr) |
 | `Cmd + E` | Toggle Code Editor Pane |
 | `Cmd + J` | Toggle Embedded Terminal Pane |
 | `Cmd + S` | Save Current File in Editor |
