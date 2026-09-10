@@ -103,6 +103,7 @@ miniOps is structured into cleanly isolated layers:
 | `Cmd + Shift + A` | Open Agent Inspector & Attention Queue |
 | `Cmd + Shift + T` | Open Task & Ticket Manager |
 | `Cmd + Shift + G` | Open Knowledge Graph Visualizer |
+| `Cmd + Shift + Return` | Commit & Push (stage all, commit with a message, push) |
 
 ---
 
