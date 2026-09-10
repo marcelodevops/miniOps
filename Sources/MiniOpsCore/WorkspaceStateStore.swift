@@ -1,24 +1,62 @@
 import Foundation
 
+public struct IntegrationSettings: Codable, Equatable {
+    public var jiraBaseURL: String
+    public var jiraEmail: String
+    public var githubUsername: String
+    /// When enabled the embedded terminal attaches a Herdr session instead of a plain login shell.
+    public var herdrModeEnabled: Bool
+
+    public init(
+        jiraBaseURL: String = "",
+        jiraEmail: String = "",
+        githubUsername: String = "",
+        herdrModeEnabled: Bool = false
+    ) {
+        self.jiraBaseURL = jiraBaseURL
+        self.jiraEmail = jiraEmail
+        self.githubUsername = githubUsername
+        self.herdrModeEnabled = herdrModeEnabled
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case jiraBaseURL
+        case jiraEmail
+        case githubUsername
+        case herdrModeEnabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.jiraBaseURL = try container.decodeIfPresent(String.self, forKey: .jiraBaseURL) ?? ""
+        self.jiraEmail = try container.decodeIfPresent(String.self, forKey: .jiraEmail) ?? ""
+        self.githubUsername = try container.decodeIfPresent(String.self, forKey: .githubUsername) ?? ""
+        self.herdrModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .herdrModeEnabled) ?? false
+    }
+}
+
 public struct PersistedAppState: Codable {
     public var lastWorkspacePath: String?
     public var lastSelectedRepoPath: String?
     public var repoStates: [String: RepoLayoutState]
     public var hiddenRepoPaths: Set<String>
     public var customRepoPaths: Set<String>
+    public var integrationSettings: IntegrationSettings
 
     public init(
         lastWorkspacePath: String? = nil,
         lastSelectedRepoPath: String? = nil,
         repoStates: [String: RepoLayoutState] = [:],
         hiddenRepoPaths: Set<String> = [],
-        customRepoPaths: Set<String> = []
+        customRepoPaths: Set<String> = [],
+        integrationSettings: IntegrationSettings = IntegrationSettings()
     ) {
         self.lastWorkspacePath = lastWorkspacePath
         self.lastSelectedRepoPath = lastSelectedRepoPath
         self.repoStates = repoStates
         self.hiddenRepoPaths = hiddenRepoPaths
         self.customRepoPaths = customRepoPaths
+        self.integrationSettings = integrationSettings
     }
 
     enum CodingKeys: String, CodingKey {
@@ -27,6 +65,7 @@ public struct PersistedAppState: Codable {
         case repoStates
         case hiddenRepoPaths
         case customRepoPaths
+        case integrationSettings
     }
 
     public init(from decoder: Decoder) throws {
@@ -36,6 +75,7 @@ public struct PersistedAppState: Codable {
         self.repoStates = try container.decodeIfPresent([String: RepoLayoutState].self, forKey: .repoStates) ?? [:]
         self.hiddenRepoPaths = try container.decodeIfPresent(Set<String>.self, forKey: .hiddenRepoPaths) ?? []
         self.customRepoPaths = try container.decodeIfPresent(Set<String>.self, forKey: .customRepoPaths) ?? []
+        self.integrationSettings = try container.decodeIfPresent(IntegrationSettings.self, forKey: .integrationSettings) ?? IntegrationSettings()
     }
 }
 
@@ -136,6 +176,24 @@ public final class WorkspaceStateStore: @unchecked Sendable {
 
     public func getCustomRepoPaths() -> Set<String> {
         queue.sync { cachedState.customRepoPaths }
+    }
+
+    public func getIntegrationSettings() -> IntegrationSettings {
+        queue.sync { cachedState.integrationSettings }
+    }
+
+    public func saveIntegrationSettings(_ settings: IntegrationSettings) {
+        queue.sync {
+            cachedState.integrationSettings = settings
+            persistToDisk()
+        }
+    }
+
+    public func setHerdrModeEnabled(_ enabled: Bool) {
+        queue.sync {
+            cachedState.integrationSettings.herdrModeEnabled = enabled
+            persistToDisk()
+        }
     }
 
     private func standardize(_ path: String) -> String {
