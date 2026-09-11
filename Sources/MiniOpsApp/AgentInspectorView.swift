@@ -7,6 +7,7 @@ public struct AgentInspectorView: View {
     public let onSelectRepo: (String) -> Void
     public let onRefresh: () -> Void
     public var onSelectAgent: ((AgentInfo) -> Void)?
+    @Binding public var waitingOnly: Bool
 
     @State private var inspectingAgent: AgentInfo?
     @State private var liveOutputText: String = ""
@@ -16,14 +17,20 @@ public struct AgentInspectorView: View {
 
     public init(
         agents: [AgentInfo],
+        waitingOnly: Binding<Bool>,
         onSelectRepo: @escaping (String) -> Void,
         onRefresh: @escaping () -> Void,
         onSelectAgent: ((AgentInfo) -> Void)? = nil
     ) {
         self.agents = agents
+        self._waitingOnly = waitingOnly
         self.onSelectRepo = onSelectRepo
         self.onRefresh = onRefresh
         self.onSelectAgent = onSelectAgent
+    }
+
+    private var filteredAgents: [AgentInfo] {
+        waitingOnly ? agents.filter(\.isWaitingForInput) : agents
     }
 
     public var body: some View {
@@ -32,10 +39,14 @@ public struct AgentInspectorView: View {
             HStack {
                 Image(systemName: "cpu")
                     .foregroundColor(.accentColor)
-                Text("Active Coding Agents (\(agents.count))")
+                Text("Active Coding Agents (\(filteredAgents.count))")
                     .font(.system(size: 12, weight: .bold))
 
                 Spacer()
+
+                Toggle("Waiting", isOn: $waitingOnly)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 10))
 
                 if herdrStatus.isRunning {
                     HStack(spacing: 4) {
@@ -74,13 +85,13 @@ public struct AgentInspectorView: View {
 
             Divider()
 
-            if agents.isEmpty {
+            if filteredAgents.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "brain.head.profile")
                         .font(.system(size: 28))
                         .foregroundColor(.secondary.opacity(0.5))
-                    Text("No local coding agents detected")
+                    Text(agents.isEmpty ? "No local coding agents detected" : "No agents are waiting for input")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                     Text("Agents started in terminal (Claude, Codex, Aider, Antigravity) or managed by Herdr will appear here.")
@@ -92,7 +103,7 @@ public struct AgentInspectorView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(agents) { agent in
+                List(filteredAgents) { agent in
                     VStack(alignment: .leading, spacing: 6) {
                         // Title row
                         HStack(spacing: 6) {

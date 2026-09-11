@@ -360,12 +360,29 @@ public struct MainWindowView: View {
     private func panelContent(_ panel: WorkbenchPanel) -> some View {
         switch panel {
             case .repos:
+                let visibleRepositories = viewModel.repositories.filter { repo in
+                    let matchesMode = viewModel.repositoryPanelFilter == .all || repo.isDirty
+                    let matchesSearch = repositorySearch.isEmpty
+                        || repo.name.localizedCaseInsensitiveContains(repositorySearch)
+                        || (repo.groupName?.localizedCaseInsensitiveContains(repositorySearch) ?? false)
+                    return matchesMode && matchesSearch
+                }
+
                 VStack(spacing: 0) {
                     HStack {
-                        Text("REPOSITORIES (\(viewModel.repositories.count))")
+                        Text("REPOSITORIES (\(visibleRepositories.count))")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.secondary)
                         Spacer()
+                        Toggle(
+                            "Dirty",
+                            isOn: Binding(
+                                get: { viewModel.repositoryPanelFilter == .dirty },
+                                set: { viewModel.repositoryPanelFilter = $0 ? .dirty : .all }
+                            )
+                        )
+                        .toggleStyle(.checkbox)
+                        .font(.system(size: 10))
                         Button(action: { isShowingBatchGitSheet = true }) {
                             Text("Batch Git")
                                 .font(.system(size: 10, weight: .semibold))
@@ -383,10 +400,7 @@ public struct MainWindowView: View {
                         .padding(.vertical, 4)
 
                     RepoListView(
-                        repos: viewModel.repositories.filter {
-                            repositorySearch.isEmpty || $0.name.localizedCaseInsensitiveContains(repositorySearch)
-                                || ($0.groupName?.localizedCaseInsensitiveContains(repositorySearch) ?? false)
-                        },
+                        repos: visibleRepositories,
                         selectedRepoPath: viewModel.selectedRepo?.path,
                         fileTree: viewModel.fileTree,
                         selectedFilePath: viewModel.selectedFilePath,
@@ -421,6 +435,10 @@ public struct MainWindowView: View {
                     tickets: viewModel.tickets,
                     selectedRepoPath: viewModel.selectedRepo?.path,
                     isExpanded: $isTicketNavigatorExpanded,
+                    openOnly: Binding(
+                        get: { viewModel.ticketPanelFilter == .open },
+                        set: { viewModel.ticketPanelFilter = $0 ? .open : .all }
+                    ),
                     isSyncing: viewModel.isSyncingTickets,
                     syncStatus: viewModel.ticketSyncStatus,
                     onSelectTicket: { ticket in
@@ -477,6 +495,10 @@ public struct MainWindowView: View {
             case .agents:
                 AgentInspectorView(
                     agents: viewModel.activeAgents,
+                    waitingOnly: Binding(
+                        get: { viewModel.agentPanelFilter == .waiting },
+                        set: { viewModel.agentPanelFilter = $0 ? .waiting : .all }
+                    ),
                     onSelectRepo: { path in
                         if let target = viewModel.repositories.first(where: { $0.path == path }) {
                             viewModel.selectRepo(target)

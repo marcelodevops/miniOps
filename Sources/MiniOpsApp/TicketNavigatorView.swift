@@ -16,13 +16,14 @@ public struct TicketNavigatorView: View {
     public let onRefresh: () -> Void
 
     @Binding public var isExpanded: Bool
+    @Binding public var openOnly: Bool
     @State private var searchText: String = ""
-    @State private var openOnly: Bool = true
 
     public init(
         tickets: [TicketInfo],
         selectedRepoPath: String?,
         isExpanded: Binding<Bool>,
+        openOnly: Binding<Bool>,
         isSyncing: Bool = false,
         syncStatus: String? = nil,
         onSelectTicket: @escaping (TicketInfo) -> Void,
@@ -32,6 +33,7 @@ public struct TicketNavigatorView: View {
         self.tickets = tickets
         self.selectedRepoPath = selectedRepoPath
         self._isExpanded = isExpanded
+        self._openOnly = openOnly
         self.isSyncing = isSyncing
         self.syncStatus = syncStatus
         self.onSelectTicket = onSelectTicket

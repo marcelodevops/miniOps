@@ -4,7 +4,6 @@ import MiniOpsCore
 
 public struct FocusWorkView: View {
     @ObservedObject public var viewModel: WorkspaceViewModel
-    @State private var selectedTicketKey: String?
     @State private var actionFeedback: String?
 
     public init(viewModel: WorkspaceViewModel) {
@@ -12,11 +11,7 @@ public struct FocusWorkView: View {
     }
 
     private var activeTicket: TicketInfo? {
-        if let key = selectedTicketKey {
-            return viewModel.tickets.first(where: { $0.key == key })
-        }
-        // Default to first open ticket or first ticket
-        return viewModel.tickets.first(where: { $0.isOpen }) ?? viewModel.tickets.first
+        viewModel.focusedTicket()
     }
 
     public var body: some View {
@@ -36,7 +31,7 @@ public struct FocusWorkView: View {
                     // Ticket selector menu
                     Menu {
                         ForEach(viewModel.tickets) { ticket in
-                            Button(action: { selectedTicketKey = ticket.key }) {
+                            Button(action: { viewModel.selectFocusTicket(ticket) }) {
                                 HStack {
                                     Text("\(ticket.key): \(ticket.summary)")
                                     if ticket.key == activeTicket?.key {
@@ -73,14 +68,16 @@ public struct FocusWorkView: View {
                 }
 
                 if let ticket = activeTicket {
+                    let repository = viewModel.repository(for: ticket)
+
                     // 1. Primary Active Ticket Card
-                    ticketCard(ticket: ticket)
+                    ticketCard(ticket: ticket, repository: repository)
 
                     // 2. Connected Repository & Branch Card
-                    connectedRepoCard(ticket: ticket)
+                    connectedRepoCard(ticket: ticket, repository: repository)
 
                     // 3. Connected Agent Card
-                    connectedAgentCard
+                    connectedAgentCard(ticket: ticket)
                 } else {
                     emptyState
                 }
@@ -91,7 +88,7 @@ public struct FocusWorkView: View {
         .background(Color(NSColor.textBackgroundColor))
     }
 
-    private func ticketCard(ticket: TicketInfo) -> some View {
+    private func ticketCard(ticket: TicketInfo, repository: RepoInfo?) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Text(ticket.key)
@@ -141,10 +138,13 @@ public struct FocusWorkView: View {
 
                 Spacer()
 
-                if let repo = viewModel.selectedRepo {
+                if let repo = repository {
                     Button(action: {
-                        viewModel.createBranchForTicket(ticket)
-                        actionFeedback = "Created and checked out \(branchName) in \(repo.name)."
+                        viewModel.createBranchForTicket(ticket, repository: repo) { result in
+                            actionFeedback = result.success
+                                ? "Created and checked out \(branchName) in \(repo.name)."
+                                : nil
+                        }
                     }) {
                         Label("Create Feature Branch", systemImage: "plus.circle")
                             .font(.system(size: 11, weight: .semibold))
@@ -159,13 +159,13 @@ public struct FocusWorkView: View {
         .cornerRadius(8)
     }
 
-    private func connectedRepoCard(ticket: TicketInfo) -> some View {
+    private func connectedRepoCard(ticket: TicketInfo, repository: RepoInfo?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("CONNECTED REPOSITORY")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(.secondary)
 
-            if let repo = viewModel.selectedRepo {
+            if let repo = repository {
                 HStack(spacing: 10) {
                     Image(systemName: "folder.fill")
                         .foregroundColor(.accentColor)
@@ -188,6 +188,10 @@ public struct FocusWorkView: View {
                     Spacer()
 
                     Button("Open Changes") {
+                        if viewModel.selectedRepo?.path != repo.path {
+                            viewModel.selectRepo(repo)
+                            guard viewModel.selectedRepo?.path == repo.path else { return }
+                        }
                         viewModel.selectCenterTab(.editor)
                         viewModel.showPanel(.changes)
                     }
@@ -198,16 +202,10 @@ public struct FocusWorkView: View {
                 .cornerRadius(8)
             } else {
                 HStack {
-                    Text("No repository currently selected.")
+                    Text("No repository association found for \(ticket.key).")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                     Spacer()
-                    if let first = viewModel.repositories.first {
-                        Button("Select \(first.name)") {
-                            viewModel.selectRepo(first)
-                        }
-                        .controlSize(.small)
-                    }
                 }
                 .padding(12)
                 .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
@@ -216,18 +214,13 @@ public struct FocusWorkView: View {
         }
     }
 
-    private var connectedAgentCard: some View {
+    private func connectedAgentCard(ticket: TicketInfo) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("ACTIVE AGENTS IN WORKSPACE")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(.secondary)
 
-            let matchingAgents = viewModel.activeAgents.filter {
-                if let repo = viewModel.selectedRepo {
-                    return $0.repoPath == repo.path || $0.repoName == repo.name
-                }
-                return true
-            }
+            let matchingAgents = viewModel.agents(for: ticket)
 
             if matchingAgents.isEmpty {
                 HStack {
@@ -259,6 +252,11 @@ public struct FocusWorkView: View {
                             Spacer()
 
                             Button("Focus in Terminal") {
+                                if let repo = viewModel.repository(for: ticket),
+                                   viewModel.selectedRepo?.path != repo.path {
+                                    viewModel.selectRepo(repo)
+                                    guard viewModel.selectedRepo?.path == repo.path else { return }
+                                }
                                 viewModel.selectCenterTab(.editor)
                                 viewModel.workbenchLayout.isBottomDockCollapsed = false
                             }
@@ -280,7 +278,9 @@ public struct FocusWorkView: View {
                 .foregroundColor(.secondary.opacity(0.6))
             Text("No Tickets Available for Focus")
                 .font(.system(size: 14, weight: .semibold))
-            Text("Sync Jira tickets or add markdown tickets to tickets/ to activate the focus workflow.")
+            Text(viewModel.workbenchLayout.focusedTicketKey == nil
+                ? "Sync Jira tickets or add markdown tickets to tickets/ to activate the focus workflow."
+                : "The previously focused ticket is not available in this workspace.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
             Button("Sync Jira Tickets") {

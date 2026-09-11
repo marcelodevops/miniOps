@@ -93,7 +93,10 @@ public struct OverviewDashboardView: View {
                 value: "\(viewModel.repositories.count)",
                 subtitle: "\(dirtyCount) with changes • \(cleanCount) clean",
                 icon: "folder.badge.gearshape",
-                color: dirtyCount > 0 ? .orange : .green
+                color: dirtyCount > 0 ? .orange : .green,
+                action: {
+                    viewModel.showRepositories(filter: dirtyCount > 0 ? .dirty : .all)
+                }
             )
 
             metricCard(
@@ -101,7 +104,10 @@ public struct OverviewDashboardView: View {
                 value: "\(viewModel.activeAgents.count)",
                 subtitle: waitingAgents > 0 ? "\(waitingAgents) waiting for input" : "All running smoothly",
                 icon: "cpu",
-                color: waitingAgents > 0 ? .red : .blue
+                color: waitingAgents > 0 ? .red : .blue,
+                action: {
+                    viewModel.showAgents(filter: waitingAgents > 0 ? .waiting : .all)
+                }
             )
 
             metricCard(
@@ -109,32 +115,47 @@ public struct OverviewDashboardView: View {
                 value: "\(viewModel.tickets.count)",
                 subtitle: "\(openTickets) open • \(viewModel.tickets.count - openTickets) done",
                 icon: "checklist",
-                color: .purple
+                color: .purple,
+                action: {
+                    viewModel.showTickets(filter: openTickets > 0 ? .open : .all)
+                }
             )
         }
     }
 
-    private func metricCard(title: String, value: String, subtitle: String, icon: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(color)
-                    .font(.system(size: 14, weight: .bold))
-                Spacer()
-                Text(value)
-                    .font(.system(size: 22, weight: .bold))
+    private func metricCard(
+        title: String,
+        value: String,
+        subtitle: String,
+        icon: String,
+        color: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: icon)
+                        .foregroundColor(color)
+                        .font(.system(size: 14, weight: .bold))
+                    Spacer()
+                    Text(value)
+                        .font(.system(size: 22, weight: .bold))
+                }
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Text(subtitle)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary.opacity(0.8))
             }
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
-            Text(subtitle)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary.opacity(0.8))
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+            .contentShape(Rectangle())
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
+        .buttonStyle(.plain)
+        .help("Open the filtered \(title.lowercased()) panel")
     }
 
     private var attentionQueueSection: some View {
