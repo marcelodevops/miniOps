@@ -129,7 +129,7 @@ private struct FileNodeRow: View {
                     if let onOpenInExternalEditor {
                         onOpenInExternalEditor(node.path)
                     } else {
-                        _ = ExternalEditor.open(path: node.path)
+                        ExternalEditor.open(path: node.path)
                     }
                 } label: {
                     Label("Open in External Editor", systemImage: "arrow.up.forward.app")

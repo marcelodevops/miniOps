@@ -188,7 +188,7 @@ private struct RepoRow: View {
                 if let onOpenInExternalEditor {
                     onOpenInExternalEditor(repo)
                 } else {
-                    _ = ExternalEditor.open(path: repo.path)
+                    ExternalEditor.open(path: repo.path)
                 }
             } label: {
                 Label("Open in External Editor", systemImage: "arrow.up.forward.app")
