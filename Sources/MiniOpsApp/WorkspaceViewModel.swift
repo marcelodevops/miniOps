@@ -22,7 +22,14 @@ public final class WorkspaceViewModel: ObservableObject {
     @Published public var isGitInspectorOpen: Bool = false
 
     // Git changes state
-    @Published public var selectedFilesForCommit: Set<String> = []
+    @Published public var selectedFilesForCommit: Set<String> = [] {
+        didSet {
+            guard let repo = selectedRepo, oldValue != selectedFilesForCommit else { return }
+            var state = stateStore.getRepoState(repoPath: repo.path)
+            state.selectedFilesForCommit = selectedFilesForCommit
+            stateStore.saveRepoState(repoPath: repo.path, state: state)
+        }
+    }
     @Published public var activeDiffFile: String? = nil
     @Published public var activeAgents: [AgentInfo] = []
     @Published public var tickets: [TicketInfo] = []
@@ -161,10 +168,16 @@ public final class WorkspaceViewModel: ObservableObject {
         self.isTerminalCollapsed = state.isTerminalCollapsed
         self.isGitInspectorOpen = state.isGitInspectorOpen
 
-        // Restore file selection
-        if let filePath = state.selectedFilePath,
-           FileManager.default.fileExists(atPath: filePath) {
-            loadFile(filePath: filePath)
+        // Restore file selection: resolve relative or absolute path within repo
+        if let storedPath = state.selectedFilePath {
+            let resolved = (storedPath as NSString).isAbsolutePath ? storedPath : (repo.path as NSString).appendingPathComponent(storedPath)
+            if FileManager.default.fileExists(atPath: resolved) {
+                _ = loadFile(filePath: resolved)
+            } else {
+                selectedFilePath = nil
+                fileContent = ""
+                isEditorModified = false
+            }
         } else {
             selectedFilePath = nil
             fileContent = ""
@@ -190,22 +203,32 @@ public final class WorkspaceViewModel: ObservableObject {
         refreshTickets()
     }
 
-    public func selectFile(_ path: String) {
-        guard path != selectedFilePath, confirmLeavingEditor() else { return }
-        loadFile(filePath: path)
+    @discardableResult
+    public func selectFile(_ path: String) -> Bool {
+        guard confirmLeavingEditor() else { return false }
+        if path == selectedFilePath { return true }
+        return loadFile(filePath: path)
     }
 
-    private func loadFile(filePath: String) {
-        guard let repo = selectedRepo else { return }
+    @discardableResult
+    private func loadFile(filePath: String) -> Bool {
+        guard let repo = selectedRepo else { return false }
+        guard let validURL = fileSystem.validatePathWithin(repoPath: repo.path, filePath: filePath) else {
+            showFileError(NSError(domain: "miniOps", code: 403, userInfo: [NSLocalizedDescriptionKey: "Invalid file path within repository: \(filePath)"]))
+            return false
+        }
+        let absolutePath = validURL.path
         do {
-            let content = try fileSystem.readFile(repoPath: repo.path, filePath: filePath)
-            self.selectedFilePath = filePath
+            let content = try fileSystem.readFile(repoPath: repo.path, filePath: absolutePath)
+            self.selectedFilePath = absolutePath
             self.fileContent = content
             self.loadedFileContent = content
             self.isEditorModified = false
             saveCurrentRepoLayout()
+            return true
         } catch {
             showFileError(error)
+            return false
         }
     }
 
@@ -617,5 +640,99 @@ public final class WorkspaceViewModel: ObservableObject {
     public func openTerminalForRepo(_ repo: RepoInfo) {
         selectRepo(repo)
         workbenchLayout.isBottomDockCollapsed = false
+    }
+
+    // MARK: - Repository-Scoped Commit Selection
+    public func setCommitSelection(_ selection: Set<String>, for repoPath: String? = nil) {
+        let targetPath = repoPath ?? selectedRepo?.path
+        guard let path = targetPath else {
+            self.selectedFilesForCommit = selection
+            return
+        }
+        if selectedRepo?.path == path {
+            self.selectedFilesForCommit = selection
+        }
+        var state = stateStore.getRepoState(repoPath: path)
+        state.selectedFilesForCommit = selection
+        stateStore.saveRepoState(repoPath: path, state: state)
+    }
+
+    public func toggleCommitSelection(for filePath: String, in repoPath: String? = nil) {
+        let targetPath = repoPath ?? selectedRepo?.path
+        guard let path = targetPath else { return }
+        var current = (selectedRepo?.path == path) ? selectedFilesForCommit : (stateStore.getRepoState(repoPath: path).selectedFilesForCommit ?? [])
+        if current.contains(filePath) {
+            current.remove(filePath)
+        } else {
+            current.insert(filePath)
+        }
+        setCommitSelection(current, for: path)
+    }
+
+    // MARK: - Repository-Isolated Commit & Reconcile
+    public func executeSelectiveCommit(
+        repoPath: String,
+        message: String,
+        selectedPaths: [String],
+        completion: @escaping (GitOperationResult) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [gitService] in
+            let result = gitService.selectiveCommit(
+                repoPath: repoPath,
+                message: message,
+                selectedPaths: selectedPaths
+            )
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if result.success {
+                    // Update persisted selection for the target repository
+                    var state = self.stateStore.getRepoState(repoPath: repoPath)
+                    state.selectedFilesForCommit = []
+                    self.stateStore.saveRepoState(repoPath: repoPath, state: state)
+
+                    // Only modify active UI state if currently selected repo matches repoPath
+                    if self.selectedRepo?.path == repoPath {
+                        self.selectedFilesForCommit.removeAll()
+                        self.refreshCurrentRepoStatus()
+                    }
+                }
+                completion(result)
+            }
+        }
+    }
+
+    public func executeReconcile(
+        repoPath: String,
+        message: String,
+        selectedPaths: [String],
+        completion: @escaping (GitOperationResult) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [gitService] in
+            let result = gitService.reconcile(
+                repoPath: repoPath,
+                message: message,
+                selectedPaths: selectedPaths
+            )
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if result.success {
+                    var state = self.stateStore.getRepoState(repoPath: repoPath)
+                    state.selectedFilesForCommit = []
+                    self.stateStore.saveRepoState(repoPath: repoPath, state: state)
+
+                    if self.selectedRepo?.path == repoPath {
+                        self.selectedFilesForCommit.removeAll()
+                        self.refreshCurrentRepoStatus()
+                    }
+                } else if result.partialSuccess {
+                    if self.selectedRepo?.path == repoPath {
+                        self.refreshCurrentRepoStatus()
+                    }
+                }
+                completion(result)
+            }
+        }
     }
 }

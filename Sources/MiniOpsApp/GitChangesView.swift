@@ -14,6 +14,7 @@ public struct GitChangesView: View {
     @State private var isErrorMessage: Bool = false
     @State private var listRatio: CGFloat = 0.3
     @State private var isDraggingDivider: Bool = false
+    @State private var diffRequestToken: UUID = UUID()
 
     private static let dividerWidth: CGFloat = 1
     private static let splitSpace = "gitChangesSplit"
@@ -361,18 +362,27 @@ public struct GitChangesView: View {
 
     private func loadDiff(for path: String) {
         currentlyViewingDiffFile = path
-        let diff = GitService.shared.getDiff(repoPath: repoPath, filePath: path)
-        diffContent = diff
+        let token = UUID()
+        self.diffRequestToken = token
+        let targetRepo = repoPath
+        DispatchQueue.global(qos: .userInitiated).async {
+            let diff = GitService.shared.getDiff(repoPath: targetRepo, filePath: path)
+            DispatchQueue.main.async {
+                guard self.diffRequestToken == token else { return }
+                self.diffContent = diff
+            }
+        }
     }
 
     private func executeSelectiveCommit() {
+        let targetRepoPath = repoPath
         isCommitting = true
         operationMessage = "Committing selected files..."
         isErrorMessage = false
 
         DispatchQueue.global(qos: .userInitiated).async {
             let result = GitService.shared.selectiveCommit(
-                repoPath: repoPath,
+                repoPath: targetRepoPath,
                 message: commitMessage,
                 selectedPaths: Array(selectedFilesForCommit)
             )
@@ -380,22 +390,31 @@ public struct GitChangesView: View {
             DispatchQueue.main.async {
                 isCommitting = false
                 if result.success {
-                    operationMessage = "Commit successful!"
-                    isErrorMessage = false
-                    commitMessage = ""
-                    selectedFilesForCommit.removeAll()
-                    currentlyViewingDiffFile = nil
-                    diffContent = ""
-                    onGitOperationDone()
+                    var state = WorkspaceStateStore.shared.getRepoState(repoPath: targetRepoPath)
+                    state.selectedFilesForCommit = []
+                    WorkspaceStateStore.shared.saveRepoState(repoPath: targetRepoPath, state: state)
+
+                    if self.repoPath == targetRepoPath {
+                        operationMessage = "Commit successful!"
+                        isErrorMessage = false
+                        commitMessage = ""
+                        selectedFilesForCommit.removeAll()
+                        currentlyViewingDiffFile = nil
+                        diffContent = ""
+                        onGitOperationDone()
+                    }
                 } else {
-                    operationMessage = result.error ?? "Commit failed"
-                    isErrorMessage = true
+                    if self.repoPath == targetRepoPath {
+                        operationMessage = result.error ?? "Commit failed"
+                        isErrorMessage = true
+                    }
                 }
             }
         }
     }
 
     private func executeReconcile() {
+        let targetRepoPath = repoPath
         isCommitting = true
         operationMessage = "Reconciling changes (commit & push)..."
         isErrorMessage = false
@@ -405,7 +424,7 @@ public struct GitChangesView: View {
 
         DispatchQueue.global(qos: .userInitiated).async {
             let result = GitService.shared.reconcile(
-                repoPath: repoPath,
+                repoPath: targetRepoPath,
                 message: msg,
                 selectedPaths: selected
             )
@@ -413,22 +432,29 @@ public struct GitChangesView: View {
             DispatchQueue.main.async {
                 isCommitting = false
                 if result.success {
-                    operationMessage = result.output
-                    isErrorMessage = false
-                    commitMessage = ""
-                    selectedFilesForCommit.removeAll()
-                    currentlyViewingDiffFile = nil
-                    diffContent = ""
-                    onGitOperationDone()
-                } else {
-                    if result.partialSuccess {
-                        operationMessage = "Partial success: \(result.error ?? "")"
-                        isErrorMessage = true
-                    } else {
-                        operationMessage = result.error ?? "Reconcile failed"
-                        isErrorMessage = true
+                    var state = WorkspaceStateStore.shared.getRepoState(repoPath: targetRepoPath)
+                    state.selectedFilesForCommit = []
+                    WorkspaceStateStore.shared.saveRepoState(repoPath: targetRepoPath, state: state)
+
+                    if self.repoPath == targetRepoPath {
+                        operationMessage = result.output
+                        isErrorMessage = false
+                        commitMessage = ""
+                        selectedFilesForCommit.removeAll()
+                        currentlyViewingDiffFile = nil
+                        diffContent = ""
+                        onGitOperationDone()
                     }
-                    onGitOperationDone()
+                } else {
+                    if self.repoPath == targetRepoPath {
+                        if result.partialSuccess {
+                            operationMessage = "Partial success: \(result.error ?? "")"
+                        } else {
+                            operationMessage = result.error ?? "Reconcile failed"
+                        }
+                        isErrorMessage = true
+                        onGitOperationDone()
+                    }
                 }
             }
         }

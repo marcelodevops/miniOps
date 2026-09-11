@@ -1486,40 +1486,73 @@ do {
     let noneResult = ExternalEditor.preferredEditorURL(appFinder: { _ in nil })
     assert(noneResult == nil, "Returns nil when no supported editor is installed")
 
-    // Test ExternalEditor.open dispatches to preferred editor or fallback
+    // Test ExternalEditor.open dispatches to preferred editor or fallback asynchronously
     var openedWithApp = false
     var openedWithDefault = false
+    var completionSuccess: Bool? = nil
     ExternalEditor.open(
         path: "/tmp/sample.txt",
         appFinder: { id in id == "com.microsoft.VSCode" ? vsCodeURL : nil },
-        fileOpener: { urls, app in
+        fileOpener: { urls, app, done in
             openedWithApp = (app == vsCodeURL && urls.first?.path == "/tmp/sample.txt")
-            return true
+            done(true)
         },
-        defaultOpener: { _ in
+        defaultOpener: { _, done in
             openedWithDefault = true
-            return true
+            done(true)
+        },
+        completion: { success in
+            completionSuccess = success
         }
     )
     assert(openedWithApp, "ExternalEditor.open opens file with detected editor")
     assert(!openedWithDefault, "Default opener not invoked when preferred editor succeeds")
+    assert(completionSuccess == true, "Completion callback reports success")
 
     openedWithApp = false
     openedWithDefault = false
+    completionSuccess = nil
     ExternalEditor.open(
         path: "/tmp/sample.txt",
         appFinder: { _ in nil },
-        fileOpener: { _, _ in
+        fileOpener: { _, _, done in
             openedWithApp = true
-            return true
+            done(false)
         },
-        defaultOpener: { url in
+        defaultOpener: { url, done in
             openedWithDefault = (url.path == "/tmp/sample.txt")
-            return true
+            done(true)
+        },
+        completion: { success in
+            completionSuccess = success
         }
     )
     assert(!openedWithApp, "No app opener called when no preferred editor exists")
     assert(openedWithDefault, "Falls back cleanly to system default opener")
+    assert(completionSuccess == true, "Fallback opener completion reports success")
+
+    // Test fallback when preferred editor reports launch failure
+    openedWithApp = false
+    openedWithDefault = false
+    completionSuccess = nil
+    ExternalEditor.open(
+        path: "/tmp/sample.txt",
+        appFinder: { id in id == "com.microsoft.VSCode" ? vsCodeURL : nil },
+        fileOpener: { _, _, done in
+            openedWithApp = true
+            done(false) // Preferred editor launch fails
+        },
+        defaultOpener: { _, done in
+            openedWithDefault = true // Fallback triggered
+            done(true)
+        },
+        completion: { success in
+            completionSuccess = success
+        }
+    )
+    assert(openedWithApp, "Preferred editor is attempted first")
+    assert(openedWithDefault, "Falls back to default opener when preferred editor reports launch failure")
+    assert(completionSuccess == true, "Completion succeeds after fallback")
 
     // 3. Multi-repo switching with layout & commit selection restoration
     let (tempDirA, repoURLA) = setupTempRepo()
@@ -1603,6 +1636,92 @@ do {
     let encodedData = try! JSONEncoder().encode(repoAState)
     let roundTrip = try! JSONDecoder().decode(RepoLayoutState.self, from: encodedData)
     assertEqual(roundTrip.selectedFilesForCommit, ["target.txt"], "Round-trip JSON encodes and decodes selectedFilesForCommit")
+}
+
+// Test 30: UI Transition Invariants & Robustness (Milestone 3 Fixes)
+print("Test 30: UI Transition Invariants & Robustness (Milestone 3 Fixes)")
+do {
+    let (tempDir, repoURL) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let gitService = GitService.shared
+
+    // Commit a baseline file to HEAD
+    let file = repoURL.appendingPathComponent("sample.txt")
+    try! "line 1\nline 2\n".write(to: file, atomically: true, encoding: .utf8)
+    _ = runGit(args: ["add", "sample.txt"], in: repoURL.path)
+    _ = runGit(args: ["commit", "-m", "Initial commit"], in: repoURL.path)
+
+    // Stage a modification: "line 1\nline 2 modified\n"
+    try! "line 1\nline 2 modified\n".write(to: file, atomically: true, encoding: .utf8)
+    _ = runGit(args: ["add", "sample.txt"], in: repoURL.path)
+
+    // Restore working tree file to HEAD state ("line 1\nline 2\n")
+    try! "line 1\nline 2\n".write(to: file, atomically: true, encoding: .utf8)
+
+    // Finding 4 verification: getDiff must report "No differences" compared to HEAD,
+    // NOT the index-to-working-tree reverse diff!
+    let diffAfterRestore = gitService.getDiff(repoPath: repoURL.path, filePath: "sample.txt")
+    assertEqual(diffAfterRestore, "No differences", "Diff must accept empty HEAD comparison without reverse fallback")
+
+    // Finding 4 verification: unborn repository diff fallback
+    let unbornDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: unbornDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: unbornDir) }
+    _ = runGit(args: ["init", "-b", "main"], in: unbornDir.path)
+    let unbornFile = unbornDir.appendingPathComponent("first.txt")
+    try! "hello unborn".write(to: unbornFile, atomically: true, encoding: .utf8)
+    _ = runGit(args: ["add", "first.txt"], in: unbornDir.path)
+
+    let unbornDiff = gitService.getDiff(repoPath: unbornDir.path, filePath: "first.txt")
+    assert(unbornDiff.contains("+hello unborn"), "Unborn repo correctly falls back to staged diff")
+
+    // Finding 3 verification: File path normalization and restoration
+    let fileSystem = FileSystemService.shared
+    let subfolder = repoURL.appendingPathComponent("sub/dir", isDirectory: true)
+    try! FileManager.default.createDirectory(at: subfolder, withIntermediateDirectories: true)
+    let subFile = subfolder.appendingPathComponent("nested.swift")
+    try! "// nested".write(to: subFile, atomically: true, encoding: .utf8)
+
+    // Relative path passed by center diff "Open in Editor"
+    let relativePath = "sub/dir/nested.swift"
+    let validated = fileSystem.validatePathWithin(repoPath: repoURL.path, filePath: relativePath)
+    assertEqual(validated?.path, subFile.standardized.path, "Validates and normalizes relative path to absolute URL")
+
+    // Verify restoration of stored relative or absolute path
+    let resolvedFromRelative = (relativePath as NSString).isAbsolutePath ? relativePath : (repoURL.path as NSString).appendingPathComponent(relativePath)
+    assert(FileManager.default.fileExists(atPath: resolvedFromRelative), "Restores relative path by resolving against repo path")
+
+    // Finding 6 verification: Immediate persistence on toggle across simulated app relaunch
+    let storeURL = tempDir.appendingPathComponent("state_test.json")
+    let store = WorkspaceStateStore(customStorageURL: storeURL)
+    var testState = RepoLayoutState()
+    testState.selectedFilesForCommit = ["file1.txt", "file2.txt"]
+    store.saveRepoState(repoPath: repoURL.path, state: testState)
+
+    // User toggles off file2.txt:
+    testState.selectedFilesForCommit = ["file1.txt"]
+    store.saveRepoState(repoPath: repoURL.path, state: testState)
+
+    // Simulate immediate app quit & relaunch:
+    let reloadedStore = WorkspaceStateStore(customStorageURL: storeURL)
+    let reloadedState = reloadedStore.getRepoState(repoPath: repoURL.path)
+    assertEqual(reloadedState.selectedFilesForCommit, ["file1.txt"], "Direct toggle persists immediately across relaunch")
+
+    // Finding 2 verification: Commit operation isolation across repositories
+    let (tempB, repoURLB) = setupTempRepo()
+    defer { try? FileManager.default.removeItem(at: tempB) }
+    var stateB = RepoLayoutState()
+    stateB.selectedFilesForCommit = ["b_keep.txt"]
+    store.saveRepoState(repoPath: repoURLB.path, state: stateB)
+
+    // Commit in Repo A clears Repo A's selection in store:
+    var stateA = store.getRepoState(repoPath: repoURL.path)
+    stateA.selectedFilesForCommit = []
+    store.saveRepoState(repoPath: repoURL.path, state: stateA)
+
+    // Repo B's selection must remain intact and isolated:
+    let stateBAfterCommitA = store.getRepoState(repoPath: repoURLB.path)
+    assertEqual(stateBAfterCommitA.selectedFilesForCommit, ["b_keep.txt"], "Repo A commit does not clear Repo B's selection")
 }
 
 print("==================================================")

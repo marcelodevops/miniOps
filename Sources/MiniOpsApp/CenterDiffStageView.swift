@@ -9,6 +9,13 @@ public struct CenterDiffStageView: View {
     @State private var operationMessage: String?
     @State private var isErrorMessage: Bool = false
 
+    // Asynchronous Diff Loading State
+    @State private var diffContent: String = ""
+    @State private var isLoadingDiff: Bool = false
+    @State private var loadedDiffFile: String? = nil
+    @State private var loadedRepoPath: String? = nil
+    @State private var diffRequestToken: UUID = UUID()
+
     public init(viewModel: WorkspaceViewModel) {
         self.viewModel = viewModel
     }
@@ -35,6 +42,14 @@ public struct CenterDiffStageView: View {
         .background(Color(NSColor.textBackgroundColor))
         .onAppear {
             ensureActiveDiffFile()
+            triggerDiffLoadIfNecessary()
+        }
+        .onChange(of: viewModel.selectedRepo?.path) { _ in
+            ensureActiveDiffFile()
+            triggerDiffLoadIfNecessary()
+        }
+        .onChange(of: viewModel.activeDiffFile) { _ in
+            triggerDiffLoadIfNecessary()
         }
     }
 
@@ -63,7 +78,9 @@ public struct CenterDiffStageView: View {
                     // File selector picker
                     Picker("", selection: Binding(
                         get: { viewModel.activeDiffFile ?? repo.changedFiles.first?.path ?? "" },
-                        set: { viewModel.activeDiffFile = $0 }
+                        set: { newFile in
+                            viewModel.activeDiffFile = newFile
+                        }
                     )) {
                         ForEach(repo.changedFiles) { change in
                             HStack {
@@ -80,10 +97,16 @@ public struct CenterDiffStageView: View {
                     .frame(maxWidth: 280)
                 }
 
+                if isLoadingDiff {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(.leading, 4)
+                }
+
                 Spacer()
 
                 // Actions for active file
-                if let activeFile = viewModel.activeDiffFile,
+                if let activeFile = currentActiveFile(for: repo),
                    repo.changedFiles.contains(where: { $0.path == activeFile }) {
                     Toggle("Include in Commit", isOn: Binding(
                         get: { viewModel.selectedFilesForCommit.contains(activeFile) },
@@ -99,8 +122,9 @@ public struct CenterDiffStageView: View {
                     .font(.system(size: 11))
 
                     Button(action: {
-                        viewModel.selectFile(activeFile)
-                        viewModel.selectCenterTab(.editor)
+                        if viewModel.selectFile(activeFile) {
+                            viewModel.selectCenterTab(.editor)
+                        }
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "pencil.line")
@@ -125,16 +149,25 @@ public struct CenterDiffStageView: View {
     // MARK: - Diff Content
     private func diffContentView(for repo: RepoInfo) -> some View {
         VStack(spacing: 0) {
-            let activeFile = viewModel.activeDiffFile ?? repo.changedFiles.first?.path ?? ""
-            let diff = GitService.shared.getDiff(repoPath: repo.path, filePath: activeFile)
+            let activeFile = currentActiveFile(for: repo) ?? ""
 
-            if diff.isEmpty {
+            if isLoadingDiff && diffContent.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    ProgressView()
+                    Text("Loading diff for \(activeFile)...")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if diffContent.isEmpty || diffContent == "No differences" {
                 VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "doc.text")
                         .font(.system(size: 28))
                         .foregroundColor(.secondary)
-                    Text("No diff available for \(activeFile)")
+                    Text(diffContent.isEmpty ? "No diff available for \(activeFile)" : "No differences compared to HEAD")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -143,7 +176,7 @@ public struct CenterDiffStageView: View {
             } else {
                 ScrollView([.horizontal, .vertical]) {
                     LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(Array(diff.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
+                        ForEach(Array(diffContent.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
                             Text(line.isEmpty ? " " : line)
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundColor(diffLineColor(line))
@@ -238,6 +271,13 @@ public struct CenterDiffStageView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func currentActiveFile(for repo: RepoInfo) -> String? {
+        if let active = viewModel.activeDiffFile, repo.changedFiles.contains(where: { $0.path == active }) {
+            return active
+        }
+        return repo.changedFiles.first?.path
+    }
+
     private func ensureActiveDiffFile() {
         if let repo = viewModel.selectedRepo, !repo.changedFiles.isEmpty {
             if viewModel.activeDiffFile == nil || !repo.changedFiles.contains(where: { $0.path == viewModel.activeDiffFile }) {
@@ -246,8 +286,41 @@ public struct CenterDiffStageView: View {
         }
     }
 
+    private func triggerDiffLoadIfNecessary() {
+        guard let repo = viewModel.selectedRepo, let active = currentActiveFile(for: repo) else {
+            diffContent = ""
+            loadedDiffFile = nil
+            loadedRepoPath = nil
+            return
+        }
+
+        if loadedRepoPath == repo.path && loadedDiffFile == active {
+            return
+        }
+
+        loadDiffAsynchronously(repoPath: repo.path, filePath: active)
+    }
+
+    private func loadDiffAsynchronously(repoPath: String, filePath: String) {
+        let token = UUID()
+        self.diffRequestToken = token
+        self.isLoadingDiff = true
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let diff = GitService.shared.getDiff(repoPath: repoPath, filePath: filePath)
+            DispatchQueue.main.async {
+                guard self.diffRequestToken == token else { return } // Discard outdated response
+                self.diffContent = diff
+                self.loadedDiffFile = filePath
+                self.loadedRepoPath = repoPath
+                self.isLoadingDiff = false
+            }
+        }
+    }
+
     private func executeSelectiveCommit() {
         guard let repo = viewModel.selectedRepo else { return }
+        let targetRepoPath = repo.path
         isCommitting = true
         operationMessage = "Committing selected files..."
         isErrorMessage = false
@@ -255,31 +328,29 @@ public struct CenterDiffStageView: View {
         let selected = Array(viewModel.selectedFilesForCommit)
         let message = commitMessage
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let result = GitService.shared.selectiveCommit(
-                repoPath: repo.path,
-                message: message,
-                selectedPaths: selected
-            )
-
-            DispatchQueue.main.async {
-                self.isCommitting = false
-                if result.success {
-                    self.operationMessage = "Commit successful!"
-                    self.isErrorMessage = false
-                    self.commitMessage = ""
-                    self.viewModel.selectedFilesForCommit.removeAll()
-                    self.viewModel.refreshCurrentRepoStatus()
-                } else {
-                    self.operationMessage = result.error ?? "Commit failed"
-                    self.isErrorMessage = true
-                }
+        viewModel.executeSelectiveCommit(
+            repoPath: targetRepoPath,
+            message: message,
+            selectedPaths: selected
+        ) { result in
+            self.isCommitting = false
+            // Only update messages if active repo is still targetRepoPath
+            guard self.viewModel.selectedRepo?.path == targetRepoPath else { return }
+            if result.success {
+                self.operationMessage = "Commit successful!"
+                self.isErrorMessage = false
+                self.commitMessage = ""
+                self.triggerDiffLoadIfNecessary()
+            } else {
+                self.operationMessage = result.error ?? "Commit failed"
+                self.isErrorMessage = true
             }
         }
     }
 
     private func executeReconcile() {
         guard let repo = viewModel.selectedRepo else { return }
+        let targetRepoPath = repo.path
         isCommitting = true
         operationMessage = "Reconciling changes (commit & push)..."
         isErrorMessage = false
@@ -287,26 +358,22 @@ public struct CenterDiffStageView: View {
         let selected = Array(viewModel.selectedFilesForCommit)
         let msg = commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "reconciling latest changes" : commitMessage
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let result = GitService.shared.reconcile(
-                repoPath: repo.path,
-                message: msg,
-                selectedPaths: selected
-            )
-
-            DispatchQueue.main.async {
-                self.isCommitting = false
-                if result.success {
-                    self.operationMessage = result.output
-                    self.isErrorMessage = false
-                    self.commitMessage = ""
-                    self.viewModel.selectedFilesForCommit.removeAll()
-                    self.viewModel.refreshCurrentRepoStatus()
-                } else {
-                    self.operationMessage = result.error ?? "Reconcile failed"
-                    self.isErrorMessage = true
-                    self.viewModel.refreshCurrentRepoStatus()
-                }
+        viewModel.executeReconcile(
+            repoPath: targetRepoPath,
+            message: msg,
+            selectedPaths: selected
+        ) { result in
+            self.isCommitting = false
+            guard self.viewModel.selectedRepo?.path == targetRepoPath else { return }
+            if result.success {
+                self.operationMessage = result.output
+                self.isErrorMessage = false
+                self.commitMessage = ""
+                self.triggerDiffLoadIfNecessary()
+            } else {
+                self.operationMessage = result.error ?? "Reconcile failed"
+                self.isErrorMessage = true
+                self.triggerDiffLoadIfNecessary()
             }
         }
     }

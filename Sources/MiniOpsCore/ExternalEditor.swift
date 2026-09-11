@@ -9,8 +9,8 @@ public struct ExternalEditor {
     ]
 
     public typealias AppFinder = (String) -> URL?
-    public typealias URLOpener = (URL) -> Bool
-    public typealias FileOpener = ([URL], URL) -> Bool
+    public typealias AsyncFileOpener = ([URL], URL, @escaping (Bool) -> Void) -> Void
+    public typealias AsyncURLOpener = (URL, @escaping (Bool) -> Void) -> Void
 
     /// Resolves the preferred editor application URL, if any of the supported editors are installed.
     public static func preferredEditorURL(
@@ -24,31 +24,41 @@ public struct ExternalEditor {
         return nil
     }
 
-    /// Opens the specified file or directory path in the preferred external editor (VS Code, Cursor, Zed),
-    /// or falls back to the system default application.
-    @discardableResult
+    /// Opens the specified file or directory path in the preferred external editor (VS Code, Cursor, Zed) asynchronously,
+    /// or falls back to the system default application only if the preferred editor launch fails.
     public static func open(
         path: String,
         appFinder: AppFinder = { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) },
-        fileOpener: FileOpener = { urls, appURL in
+        fileOpener: @escaping AsyncFileOpener = { urls, appURL, completion in
             let config = NSWorkspace.OpenConfiguration()
-            var opened = false
-            let semaphore = DispatchSemaphore(value: 0)
             NSWorkspace.shared.open(urls, withApplicationAt: appURL, configuration: config) { _, error in
-                opened = (error == nil)
-                semaphore.signal()
+                completion(error == nil)
             }
-            _ = semaphore.wait(timeout: .now() + 1.0)
-            return opened
         },
-        defaultOpener: URLOpener = { NSWorkspace.shared.open($0) }
-    ) -> Bool {
-        let fileURL = URL(fileURLWithPath: path)
+        defaultOpener: @escaping AsyncURLOpener = { url, completion in
+            let config = NSWorkspace.OpenConfiguration()
+            NSWorkspace.shared.open(url, configuration: config) { _, error in
+                completion(error == nil)
+            }
+        },
+        completion: ((Bool) -> Void)? = nil
+    ) {
+        let fileURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardized
         if let (_, appURL) = preferredEditorURL(appFinder: appFinder) {
-            if fileOpener([fileURL], appURL) {
-                return true
+            fileOpener([fileURL], appURL) { success in
+                if success {
+                    completion?(true)
+                } else {
+                    // Preferred editor failed to open, fallback to default
+                    defaultOpener(fileURL) { defaultSuccess in
+                        completion?(defaultSuccess)
+                    }
+                }
+            }
+        } else {
+            defaultOpener(fileURL) { defaultSuccess in
+                completion?(defaultSuccess)
             }
         }
-        return defaultOpener(fileURL)
     }
 }

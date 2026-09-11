@@ -8,20 +8,20 @@ Preserve myops-os capabilities in a native SwiftUI/AppKit application with a pan
 
 Assume the current `/Users/mac/repos/myops-os` checkout is the reference. Before implementation, compare it with the user's familiar running myOps build and resolve any differences. Preserve existing miniOps capabilities, including Git safety, editor safeguards, terminal sessions, Herdr integration, and Keychain storage. This document authorizes no deployment or replacement.
 
-## Findings from the current sources
+## Findings and current implementation state
 
-| Area | myops-os reference | miniOps today | Work needed |
-|---|---|---|---|
-| Navigation | Overview, Focus, Repos, Tickets, Agents, Graph, Settings | Repository/file navigator; global tools inside a repository-dependent inspector | Introduce panel navigation; distinguish workspace-wide panels from repository-scoped tools |
-| Overview | Summary tiles, attention lists, charts with filter links | Menu bar summary exists; no equivalent landing page in the main window | Build the dashboard from native models; port missing summary fields |
-| Focus | Active ticket with repository, agent, and context cards | Tickets, repositories, and agents exist separately | Restore the connected active-work workflow |
-| Repositories | Searchable/filterable cards, groups, health and sync information | Searchable repository/file tree and toolbar | Preserve browsing, grouping, filters, and health in a Repositories panel |
-| Repository work | Editor above terminal on the left, repository detail drawer on the right | Tools replaces the editor/terminal canvas through `isGitInspectorOpen` | Keep workbench and repository details visible together |
-| Changes, stash, worktrees, notes | Sections/actions in repository detail | Existing native feature views | Recompose existing views; audit individual action parity |
-| Tickets | Workspace page with status/priority/type/project filters and details | Native ticket manager and sidebar; search/open filter; Jira service | Make accessible without selecting a repository; complete filters and detail actions |
-| Agents | Workspace cards, attention state, repository links, context usage when available | Agent inspector and process/Herdr services | Expose a workspace-wide Agents panel; audit metadata and usage parity |
-| Graph | Interactive graph, dataset selector, neighborhoods, node details | Native graph summary/community/node browsing | Audit and implement missing graph interactions natively |
-| Status and settings | Refresh freshness, operation history, independent repo/Jira sync, paths and credentials | Native settings/services plus local banners | Unify status presentation and verify settings/data parity |
+| Area | myops-os reference | miniOps implementation | Status | Work needed |
+|---|---|---|---|---|
+| Navigation | Overview, Focus, Repos, Tickets, Agents, Graph, Settings | 4-zone workbench with Left/Right/Bottom docks, Center stage tabs, and Status bar | Done (M2) | Coexists without depending on selected repo; movable docks |
+| Overview | Summary tiles, attention lists, charts with filter links | Center Stage `OverviewDashboardView` | Partial (M4) | Hook up filter clicks to activate respective dock panels |
+| Focus | Active ticket with repository, agent, and context cards | Center Stage `FocusWorkView` | Partial (M4) | Retain selected active ticket across workspace switches |
+| Repositories | Searchable/filterable cards, groups, health and sync information | Repos panel in Left Dock; grouped tree, dirty badges, branch tags, ahead/behind counters | Done (M3) | Full secondary actions: Terminal, External Editor, Remote URL, Finder |
+| Repository work | Editor above terminal on the left, repository detail drawer on the right | Persistent center Editor/Diff, bottom SwiftTerm dock, right Context Tools dock | Done (M3) | Center Diff stage; non-blocking diff loading; repo-isolated commits |
+| Changes, stash, worktrees, notes | Sections/actions in repository detail | `GitChangesView` in dock; `StashManagerView`, `WorktreeManagerView`, `RepoNotesView` | Done (M3) | Quick jump menu between Git context tools; Center Diff inspector |
+| Tickets | Workspace page with status/priority/type/project filters and details | `TicketNavigatorView` in Left/Right dock; Jira sync service and Keychain auth | Partial (M5) | Workspace-wide accessibility verified; audit detail actions and filters |
+| Agents | Workspace cards, attention state, repository links, context usage when available | `AgentInspectorView` in dock; Agent process scanner and Herdr socket service | Partial (M5) | Audit metadata, attention state triggers, and session creation parity |
+| Graph | Interactive graph, dataset selector, neighborhoods, node details | Native graph visualizer in Center Stage; `GraphifyScanner` integration | Partial (M5) | Audit node detail inspection and neighborhood focus native drawing |
+| Status and settings | Refresh freshness, operation history, independent repo/Jira sync, paths and credentials | `WorkbenchStatusBarView`, `SettingsSheetContainer`, Keychain `CredentialStore` | Partial (M5) | Audit settings export/import compatibility |
 
 Presence in source is not proof of working parity. Each row needs runtime acceptance checks before it can be marked complete.
 
@@ -87,6 +87,14 @@ The first version needs predictable left/right/bottom docks, not a general-purpo
 - Verify secondary actions: external editor, Finder/remote navigation, clone/create/import/hide, and batch action scope. Port missing reference actions such as batch stash only after the inventory confirms the gap.
 
 **Gate:** browse a repository → inspect changes → edit/save → use terminal → selectively commit → return to browse. Tickets, Agents, editor, and terminal coexist; Git details do not replace the workbench. Switching between two repositories restores the correct state. Excluded staged changes remain excluded.
+
+**Status:** Implementation verified against review feedback (2026-09-11):
+1. Diff loading decoupled from SwiftUI rendering (`CenterDiffStageView`, `GitChangesView` async with cancellation token).
+2. Commit/reconcile operations isolated by captured repository path; switching repos during an ongoing commit does not modify another repo's active UI or selection.
+3. "Open in Editor" normalizes to validated absolute paths, preventing file loss upon repo switch/relaunch.
+4. Diff fallback strictly handles unborn repositories; empty HEAD comparison is accepted without displaying misleading index-to-working-tree reversal.
+5. `ExternalEditor` async dispatch avoids thread blocking and eliminates duplicate editor launch race.
+6. Commit selection changes persist immediately on toggle across app relaunch.
 
 This is the first useful native parity release; complete it before spreading effort across all dashboard pages.
 

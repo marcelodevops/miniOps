@@ -114,23 +114,30 @@ public final class GitService: @unchecked Sendable {
 
         // 1. Try diffing against HEAD (captures both staged and unstaged modifications)
         let headRes = runGit(args: ["--literal-pathspecs", "diff", "HEAD", "--", filePath], in: repoPath)
-        if headRes.status == 0 && !headRes.stdout.isEmpty {
-            return headRes.stdout
+        if headRes.status == 0 {
+            // When HEAD comparison succeeds, accept the result directly even when empty.
+            // DO NOT fall back to index-to-working-tree diff, which would show a spurious reverse diff
+            // if a staged change was restored to HEAD in the working tree.
+            return headRes.stdout.isEmpty ? "No differences" : headRes.stdout
         }
 
-        // 2. Try unstaged diff (e.g. if HEAD does not exist yet)
-        let unstagedRes = runGit(args: ["--literal-pathspecs", "diff", "--", filePath], in: repoPath)
-        if !unstagedRes.stdout.isEmpty {
-            return unstagedRes.stdout
+        // 2. Check if repository has no HEAD yet (unborn repository before first commit)
+        let hasHead = runGit(args: ["rev-parse", "--verify", "HEAD"], in: repoPath).status == 0
+        if !hasHead {
+            let cachedRes = runGit(args: ["--literal-pathspecs", "diff", "--cached", "--", filePath], in: repoPath)
+            if !cachedRes.stdout.isEmpty {
+                return cachedRes.stdout
+            }
+            let unstagedRes = runGit(args: ["--literal-pathspecs", "diff", "--", filePath], in: repoPath)
+            if !unstagedRes.stdout.isEmpty {
+                return unstagedRes.stdout
+            }
+            return "No differences"
         }
 
-        // 3. Try staged diff (e.g. if staged in an initial repository before first commit)
-        let cachedRes = runGit(args: ["--literal-pathspecs", "diff", "--cached", "--", filePath], in: repoPath)
-        if !cachedRes.stdout.isEmpty {
-            return cachedRes.stdout
-        }
-
-        return "No differences"
+        // 3. Diff against HEAD failed with an actual error; report it
+        let errorMsg = headRes.stderr.isEmpty ? headRes.stdout : headRes.stderr
+        return errorMsg.isEmpty ? "Error diffing \(filePath)" : errorMsg
     }
 
     public func validatePaths(repoPath: String, paths: [String]) throws -> [String] {
