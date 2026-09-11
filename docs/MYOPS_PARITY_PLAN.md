@@ -88,7 +88,7 @@ The first version needs predictable left/right/bottom docks, not a general-purpo
 
 **Gate:** browse a repository → inspect changes → edit/save → use terminal → selectively commit → return to browse. Tickets, Agents, editor, and terminal coexist; Git details do not replace the workbench. Switching between two repositories restores the correct state. Excluded staged changes remain excluded.
 
-**Status:** Implemented; final refresh and in-flight transition validation pending (2026-09-11):
+**Status:** Complete (2026-09-11). The milestone gate is covered by the implemented workflow and automated Tests 29–31:
 1. Diff loading decoupled from SwiftUI rendering (`CenterDiffStageView`, `GitChangesView` async with cancellation token).
 2. Side-panel commit and reconcile operations fully isolated by captured repository path; snapshots captured on main thread, routed through repository-scoped ViewModel handlers (`onExecuteCommit` / `onExecuteReconcile`), with background completions guarded against active repository switches to prevent cross-repo selection clearing.
 3. Reactive `statusRevision` published after every successful relevant refresh—including both `refreshCurrentRepoStatus()` and workspace rescan `refreshRepositories()`.
@@ -99,11 +99,12 @@ The first version needs predictable left/right/bottom docks, not a general-purpo
 8. Diff fallback strictly handles unborn repositories; empty HEAD comparison is accepted without displaying misleading index-to-working-tree reversal.
 9. `ExternalEditor` async dispatch avoids thread blocking and eliminates duplicate editor launch race.
 10. Commit selection changes persist immediately on toggle across app relaunch.
-11. End-to-end Test 31 verified:
+11. End-to-end Test 31 verifies:
     - UI check verifying rendered diff updates (`activeDiffContent`) after same-file external edits through both refresh routes (`refreshCurrentRepoStatus` and `refreshRepositories`).
-    - Deliberately blocked Repo A's commit in-flight via concurrency gate, switched to Repo B while A's commit was running, released it, and verified isolation in both repositories (1,347 checks passing).
+    - Deliberately blocked Repo A's commit in-flight via concurrency gate, switched to Repo B while A's commit was running, released it, and verified isolation in both repositories.
+12. The full automated suite passes with 1,350 checks, including Test 32's subprocess/run-loop regression coverage.
 
-This is the first useful native parity release; complete it before spreading effort across all dashboard pages.
+Candidate packaging, window-size checks, interactive runtime acceptance, daily-workflow use, backup, and rollback verification belong exclusively to Milestone 6. They do not reopen this implementation milestone.
 
 ### 4. Restore Overview and Focus as center tabs
 
@@ -125,6 +126,7 @@ This is the first useful native parity release; complete it before spreading eff
 
 ### 6. Validate and transition
 
+- Treat this as the sole candidate/runtime acceptance milestone; implementation milestones are not held open for packaging or soak testing once their own gates pass.
 - Exercise 1000×680, 1280×800, and a large desktop window, plus repeated resizing and split dragging. Reconcile the smallest size with the accepted layout minimum.
 - Cover clean/dirty/large repositories, long paths, large counts, no tickets, unavailable integrations, slow Git operations, and stale refreshes.
 - Test repository locks, literal filenames, selective commits with already-staged excluded files, external editor modifications, and unsaved-buffer transitions using temporary repositories.
