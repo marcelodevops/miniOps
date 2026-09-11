@@ -612,7 +612,7 @@ public final class WorkspaceViewModel: ObservableObject {
     // MARK: - Secondary Actions
     public func openInExternalEditor(path: String) {
         let targetPath = (path as NSString).isAbsolutePath ? path : (selectedRepo?.path ?? workspacePath) + "/" + path
-        _ = ExternalEditor.open(path: targetPath)
+        ExternalEditor.open(path: targetPath)
     }
 
     public func revealInFinder(path: String) {
@@ -676,7 +676,7 @@ public final class WorkspaceViewModel: ObservableObject {
         selectedPaths: [String],
         completion: @escaping (GitOperationResult) -> Void
     ) {
-        DispatchQueue.global(qos: .userInitiated).async { [gitService] in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, gitService] in
             let result = gitService.selectiveCommit(
                 repoPath: repoPath,
                 message: message,
@@ -708,7 +708,7 @@ public final class WorkspaceViewModel: ObservableObject {
         selectedPaths: [String],
         completion: @escaping (GitOperationResult) -> Void
     ) {
-        DispatchQueue.global(qos: .userInitiated).async { [gitService] in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, gitService] in
             let result = gitService.reconcile(
                 repoPath: repoPath,
                 message: message,
