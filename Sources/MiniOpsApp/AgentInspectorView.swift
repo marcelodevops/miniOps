@@ -11,7 +11,8 @@ public struct AgentInspectorView: View {
     @State private var inspectingAgent: AgentInfo?
     @State private var liveOutputText: String = ""
     @State private var isLoadingOutput: Bool = false
-    @State private var herdrStatus: HerdrStatusInfo = HerdrService.shared.getHerdrStatus()
+    @State private var herdrStatus = HerdrStatusInfo(isInstalled: false, isRunning: false)
+    @State private var isRefreshingStatus: Bool = false
 
     public init(
         agents: [AgentInfo],
@@ -51,8 +52,13 @@ public struct AgentInspectorView: View {
                     .help("Herdr daemon is active at \(herdrStatus.socketPath ?? "herdr.sock")")
                 }
 
+                if isRefreshingStatus {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
                 Button(action: {
-                    herdrStatus = HerdrService.shared.getHerdrStatus()
+                    refreshHerdrStatus()
                     onRefresh()
                 }) {
                     Image(systemName: "arrow.clockwise")
@@ -60,6 +66,7 @@ public struct AgentInspectorView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Refresh agent processes")
+                .disabled(isRefreshingStatus)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -199,12 +206,15 @@ public struct AgentInspectorView: View {
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
+                                .disabled(isLoadingOutput)
 
                                 Button(action: {
-                                    _ = HerdrService.shared.focusAgent(
-                                        paneId: pane,
-                                        workspaceId: agent.herdrWorkspaceId
-                                    )
+                                    DispatchQueue.global(qos: .userInitiated).async {
+                                        _ = HerdrService.shared.focusAgent(
+                                            paneId: pane,
+                                            workspaceId: agent.herdrWorkspaceId
+                                        )
+                                    }
                                 }) {
                                     Label("Jump in Terminal", systemImage: "arrow.up.forward.app")
                                         .font(.system(size: 10, weight: .semibold))
@@ -236,12 +246,34 @@ public struct AgentInspectorView: View {
                 }
             )
         }
+        .onAppear {
+            refreshHerdrStatus()
+        }
     }
 
     private func inspectLiveOutput(agent: AgentInfo) {
         guard let pane = agent.herdrPaneId else { return }
-        liveOutputText = HerdrService.shared.readPaneOutput(paneId: pane, lines: 120)
-        inspectingAgent = agent
+        isLoadingOutput = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let output = HerdrService.shared.readPaneOutput(paneId: pane, lines: 120)
+            DispatchQueue.main.async {
+                self.liveOutputText = output
+                self.inspectingAgent = agent
+                self.isLoadingOutput = false
+            }
+        }
+    }
+
+    private func refreshHerdrStatus() {
+        guard !isRefreshingStatus else { return }
+        isRefreshingStatus = true
+        DispatchQueue.global(qos: .utility).async {
+            let status = HerdrService.shared.getHerdrStatus()
+            DispatchQueue.main.async {
+                self.herdrStatus = status
+                self.isRefreshingStatus = false
+            }
+        }
     }
 }
 
@@ -301,7 +333,12 @@ private struct HerdrOutputSheetView: View {
 
                 Button(action: {
                     if let pane = agent.herdrPaneId {
-                        _ = HerdrService.shared.focusAgent(paneId: pane, workspaceId: agent.herdrWorkspaceId)
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            _ = HerdrService.shared.focusAgent(
+                                paneId: pane,
+                                workspaceId: agent.herdrWorkspaceId
+                            )
+                        }
                     }
                 }) {
                     Label("Focus in Terminal", systemImage: "arrow.up.forward.app")
@@ -331,12 +368,27 @@ private struct HerdrOutputSheetView: View {
         }
         .frame(minWidth: 680, idealWidth: 780, minHeight: 440, idealHeight: 520)
         .onAppear {
-            output = initialOutput.isEmpty ? (agent.herdrPaneId.map { HerdrService.shared.readPaneOutput(paneId: $0, lines: lineCount) } ?? "") : initialOutput
+            if initialOutput.isEmpty {
+                refreshOutput()
+            } else {
+                output = initialOutput
+            }
         }
     }
 
     private func refreshOutput() {
-        guard let pane = agent.herdrPaneId else { return }
-        output = HerdrService.shared.readPaneOutput(paneId: pane, lines: lineCount)
+        guard let pane = agent.herdrPaneId, !isRefreshing else { return }
+        let requestedLineCount = lineCount
+        isRefreshing = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let refreshedOutput = HerdrService.shared.readPaneOutput(
+                paneId: pane,
+                lines: requestedLineCount
+            )
+            DispatchQueue.main.async {
+                self.output = refreshedOutput
+                self.isRefreshing = false
+            }
+        }
     }
 }
