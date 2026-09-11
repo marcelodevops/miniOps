@@ -1262,6 +1262,63 @@ do {
     assertEqual(openOnly.first?.key, "KAN-1", "Open ticket is KAN-1")
 }
 
+// Test 27: Split Pane Layout Adapts To Container Width
+print("Test 27: Split Pane Layout Adapts To Container Width")
+do {
+    // Reproduces the reported bug: the detail pane is 1200pt wide with the sidebar
+    // hidden, then the 280pt sidebar appears and it drops to 920pt. An absolute
+    // divider (the HSplitView behaviour) keeps the leading pane at 360pt, leaving
+    // the file list sitting under the sidebar. A proportional layout must shrink it.
+    let wide = SplitPaneLayout.resolve(totalWidth: 1200, ratio: 0.3)
+    assertEqual(Int(wide.leadingWidth.rounded()), 360, "Leading pane takes its ratio of the wide container")
+    assertEqual(Int(wide.totalWidth.rounded()), 1200, "Panes fill the wide container exactly")
+
+    let narrow = SplitPaneLayout.resolve(totalWidth: 920, ratio: 0.3)
+    assertEqual(Int(narrow.leadingWidth.rounded()), 276, "Leading pane shrinks with the container when the sidebar appears")
+    assertEqual(Int(narrow.totalWidth.rounded()), 920, "Panes fill the narrowed container exactly")
+    assert(narrow.leadingWidth < wide.leadingWidth, "Leading pane must not keep its absolute width when the container narrows")
+
+    // The invariant that makes overflow impossible at any width.
+    for width in stride(from: 60.0, through: 2400.0, by: 30.0) {
+        for ratio in [0.0, 0.15, 0.3, 0.5, 0.85, 1.0] {
+            let layout = SplitPaneLayout.resolve(totalWidth: CGFloat(width), ratio: CGFloat(ratio))
+            let delta = abs(layout.totalWidth - CGFloat(width))
+            assert(delta < 0.001, "Panes exactly fill a \(Int(width))pt container at ratio \(ratio)")
+            assert(layout.leadingWidth >= 0 && layout.trailingWidth >= 0, "Pane widths never go negative at \(Int(width))pt")
+        }
+    }
+
+    // Minimum widths are honoured whenever the container can afford them.
+    let squeezed = SplitPaneLayout.resolve(totalWidth: 600, ratio: 0.02)
+    assertEqual(Int(squeezed.leadingWidth.rounded()), 200, "Leading pane is clamped to its minimum width")
+    let stretched = SplitPaneLayout.resolve(totalWidth: 600, ratio: 0.99)
+    assertEqual(Int(stretched.trailingWidth.rounded()), 220, "Trailing pane keeps its minimum width")
+
+    // Too small for both minimums: share proportionally instead of overflowing.
+    let tiny = SplitPaneLayout.resolve(totalWidth: 210, ratio: 0.5)
+    assertEqual(Int(tiny.totalWidth.rounded()), 210, "Undersized container is still filled exactly, not overflowed")
+    assert(tiny.leadingWidth < 200, "Leading minimum is relaxed rather than overflowing the container")
+    assert(tiny.leadingWidth > 0 && tiny.trailingWidth > 0, "Both panes stay visible in an undersized container")
+
+    // Degenerate inputs must not produce NaN or negative geometry.
+    assertEqual(SplitPaneLayout.resolve(totalWidth: 0, ratio: 0.3).totalWidth, 0, "Zero width resolves to an empty layout")
+    assertEqual(SplitPaneLayout.resolve(totalWidth: -50, ratio: 0.3).totalWidth, 0, "Negative width resolves to an empty layout")
+    let nanRatio = SplitPaneLayout.resolve(totalWidth: 800, ratio: .nan)
+    assert(nanRatio.leadingWidth.isFinite, "A non-finite ratio falls back to a finite layout")
+    assertEqual(Int(nanRatio.totalWidth.rounded()), 800, "A non-finite ratio still fills the container")
+
+    // Divider drag maps back to a clamped ratio.
+    assertEqual(SplitPaneLayout.ratio(forLeadingWidth: 400, totalWidth: 801), 0.5, "Dragging to half width yields a 0.5 ratio")
+    assertEqual(SplitPaneLayout.ratio(forLeadingWidth: -100, totalWidth: 801), SplitPaneLayout.minimumRatio, "Dragging past the left edge clamps to the minimum ratio")
+    assertEqual(SplitPaneLayout.ratio(forLeadingWidth: 5000, totalWidth: 801), SplitPaneLayout.maximumRatio, "Dragging past the right edge clamps to the maximum ratio")
+    assertEqual(SplitPaneLayout.ratio(forLeadingWidth: 100, totalWidth: 0), SplitPaneLayout.minimumRatio, "A zero-width container cannot produce a divergent ratio")
+
+    // A drag is stable: resolving a dragged ratio reproduces that divider position.
+    let dragRatio = SplitPaneLayout.ratio(forLeadingWidth: 500, totalWidth: 1001)
+    let dragged = SplitPaneLayout.resolve(totalWidth: 1001, ratio: dragRatio)
+    assertEqual(Int(dragged.leadingWidth.rounded()), 500, "Divider lands where it was dragged")
+}
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")
