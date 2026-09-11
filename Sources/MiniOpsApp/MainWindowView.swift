@@ -21,6 +21,9 @@ public struct MainWindowView: View {
     @State private var isShowingCommitPushPrompt: Bool = false
     @State private var commitPushMessage: String = ""
     @State private var isTicketNavigatorExpanded: Bool = true
+    @State private var leftDragStart: Double?
+    @State private var rightDragStart: Double?
+    @State private var bottomDragStart: Double?
     @State private var isDraggingLeftDivider: Bool = false
     @State private var isDraggingRightDivider: Bool = false
     @State private var isDraggingBottomDivider: Bool = false
@@ -57,14 +60,19 @@ public struct MainWindowView: View {
 
             // 3. Four-Zone Workbench Body
             GeometryReader { geo in
+                let widths = WorkbenchDockGeometry.resolve(
+                    width: geo.size.width,
+                    left: viewModel.workbenchLayout.isLeftDockCollapsed ? 0 : viewModel.workbenchLayout.leftDockWidth,
+                    right: viewModel.workbenchLayout.isRightDockCollapsed ? 0 : viewModel.workbenchLayout.rightDockWidth
+                )
                 HStack(spacing: 0) {
                     // LEFT DOCK: Repositories & Tickets
                     if !viewModel.workbenchLayout.isLeftDockCollapsed {
                         leftDockView
-                            .frame(width: CGFloat(viewModel.workbenchLayout.leftDockWidth))
+                            .frame(width: widths.left)
 
                         // Draggable Left Divider
-                        leftDividerBar
+                        leftDividerBar(width: widths.left, maximum: geo.size.width - widths.right - 368)
                     }
 
                     // CENTER STAGE & BOTTOM TERMINAL DOCK
@@ -86,13 +94,14 @@ public struct MainWindowView: View {
 
                     // RIGHT DOCK: Context Tools (Changes, Agents, Stashes, Worktrees, Notes)
                     if !viewModel.workbenchLayout.isRightDockCollapsed {
-                        rightDividerBar
+                        rightDividerBar(width: widths.right, maximum: geo.size.width - widths.left - 368)
 
                         rightDockView
-                            .frame(width: CGFloat(viewModel.workbenchLayout.rightDockWidth))
+                            .frame(width: widths.right)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .coordinateSpace(name: "workbench")
             }
 
             // 4. Workbench Status Bar
@@ -291,11 +300,13 @@ public struct MainWindowView: View {
             // Left Dock Header
             HStack(spacing: 6) {
                 Picker("", selection: $viewModel.workbenchLayout.activeLeftTab) {
-                    Text("Repos (\(viewModel.repositories.count))").tag(LeftDockTab.repos)
-                    Text("Tickets (\(viewModel.tickets.count))").tag(LeftDockTab.tickets)
+                    ForEach(viewModel.workbenchLayout.panels(in: .left), id: \.self) { panel in
+                        Text(panelTitle(panel)).tag(panel)
+                    }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 .controlSize(.small)
+                movePanelMenu(viewModel.workbenchLayout.activeLeftTab, from: .left)
 
                 Spacer()
 
@@ -334,7 +345,20 @@ public struct MainWindowView: View {
             Divider()
 
             // Content according to activeLeftTab
-            switch viewModel.workbenchLayout.activeLeftTab {
+            if viewModel.workbenchLayout.panels(in: .left).isEmpty {
+                Text("Move a panel here from the right dock.").foregroundColor(.secondary).padding()
+                Spacer()
+            } else {
+                panelContent(viewModel.workbenchLayout.activeLeftTab)
+            }
+
+        }
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+    }
+
+    @ViewBuilder
+    private func panelContent(_ panel: WorkbenchPanel) -> some View {
+        switch panel {
             case .repos:
                 VStack(spacing: 0) {
                     HStack {
@@ -401,151 +425,6 @@ public struct MainWindowView: View {
                     }
                 )
                 .frame(maxHeight: .infinity)
-            }
-        }
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
-    }
-
-    // MARK: - Center Stage View
-    @ViewBuilder
-    private var centerStageView: some View {
-        switch viewModel.workbenchLayout.activeCenterTab {
-        case .editor:
-            editorStageContent
-        case .overview:
-            OverviewDashboardView(viewModel: viewModel)
-        case .focus:
-            FocusWorkView(viewModel: viewModel)
-        case .graph:
-            GraphifyVisualizerView(
-                graphData: viewModel.graphData,
-                onSelectFile: { filePath in
-                    viewModel.selectFile(filePath)
-                    viewModel.selectCenterTab(.editor)
-                },
-                onRefresh: {
-                    viewModel.refreshGraph()
-                }
-            )
-        }
-    }
-
-    @ViewBuilder
-    private var editorStageContent: some View {
-        if let selectedFile = viewModel.selectedFilePath {
-            EditorContainerView(
-                text: $viewModel.fileContent,
-                isModified: $viewModel.isEditorModified,
-                filePath: selectedFile,
-                onSave: {
-                    viewModel.saveCurrentFile()
-                }
-            )
-        } else if let repo = viewModel.selectedRepo {
-            // Selected repo welcome card
-            VStack(spacing: 14) {
-                Spacer()
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 40))
-                    .foregroundColor(.accentColor)
-                Text(repo.name)
-                    .font(.title2.bold())
-                Text("Branch: \(repo.branch) • \(repo.changedFiles.count) modified files")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-
-                HStack(spacing: 10) {
-                    Button("View Changes") {
-                        viewModel.workbenchLayout.activeRightTab = .changes
-                        viewModel.workbenchLayout.isRightDockCollapsed = false
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("Open Terminal") {
-                        viewModel.workbenchLayout.isBottomDockCollapsed = false
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("View Overview") {
-                        viewModel.selectCenterTab(.overview)
-                    }
-                    .buttonStyle(.bordered)
-                }
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(NSColor.textBackgroundColor))
-        } else {
-            VStack(spacing: 14) {
-                Spacer()
-                Image(systemName: "macwindow")
-                    .font(.system(size: 44))
-                    .foregroundColor(.accentColor.opacity(0.7))
-                Text("miniOps Native Workbench")
-                    .font(.title2.bold())
-                Text("Select a repository from the left dock, or browse workspace tools.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-
-                HStack(spacing: 10) {
-                    Button("Open Workspace Overview") {
-                        viewModel.selectCenterTab(.overview)
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Button("Browse Tickets") {
-                        viewModel.workbenchLayout.activeLeftTab = .tickets
-                        viewModel.workbenchLayout.isLeftDockCollapsed = false
-                    }
-                    .buttonStyle(.bordered)
-                }
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(NSColor.textBackgroundColor))
-        }
-    }
-
-    // MARK: - Right Dock View
-    private var rightDockView: some View {
-        VStack(spacing: 0) {
-            // Header with tab selector and collapse button
-            HStack(spacing: 6) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    Picker("", selection: $viewModel.workbenchLayout.activeRightTab) {
-                        let changedCount = viewModel.selectedRepo?.changedFiles.count ?? 0
-                        Text("Changes (\(changedCount))").tag(RightDockTab.changes)
-                        Text("Agents (\(viewModel.activeAgents.count))").tag(RightDockTab.agents)
-                        Text("Stashes").tag(RightDockTab.stashes)
-                        Text("Worktrees").tag(RightDockTab.worktrees)
-                        Text("Notes").tag(RightDockTab.notes)
-                    }
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                }
-
-                Spacer()
-
-                Button(action: {
-                    withAnimation {
-                        viewModel.toggleRightDock()
-                    }
-                }) {
-                    Image(systemName: "xmark.circle")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help("Close Tools Panel (Cmd+3)")
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color(NSColor.controlBackgroundColor))
-
-            Divider()
-
-            // Content according to activeRightTab
-            switch viewModel.workbenchLayout.activeRightTab {
             case .changes:
                 if let repo = viewModel.selectedRepo {
                     GitChangesView(
@@ -603,7 +482,176 @@ public struct MainWindowView: View {
                 } else {
                     noRepoPlaceholder(for: "Repository Notes")
                 }
+        }
+    }
+
+    private func panelTitle(_ panel: WorkbenchPanel) -> String {
+        switch panel {
+        case .repos: return "Repos (\(viewModel.repositories.count))"
+        case .tickets: return "Tickets (\(viewModel.tickets.count))"
+        case .agents: return "Agents (\(viewModel.activeAgents.count))"
+        case .changes: return "Changes (\(viewModel.selectedRepo?.changedFiles.count ?? 0))"
+        default: return panel.rawValue
+        }
+    }
+
+    private func movePanelMenu(_ panel: WorkbenchPanel, from dock: SideDock) -> some View {
+        Menu {
+            Button(dock == .left ? "Move to Right Dock" : "Move to Left Dock") {
+                viewModel.workbenchLayout.move(panel, to: dock == .left ? .right : .left)
             }
+        } label: {
+            Image(systemName: "arrow.left.arrow.right")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Move Panel")
+        .disabled(viewModel.workbenchLayout.panels(in: dock).isEmpty)
+    }
+
+    // MARK: - Center Stage View
+    @ViewBuilder
+    private var centerStageView: some View {
+        switch viewModel.workbenchLayout.activeCenterTab {
+        case .editor:
+            editorStageContent
+        case .overview:
+            OverviewDashboardView(viewModel: viewModel)
+        case .focus:
+            FocusWorkView(viewModel: viewModel)
+        case .graph:
+            GraphifyVisualizerView(
+                graphData: viewModel.graphData,
+                onSelectFile: { filePath in
+                    viewModel.selectFile(filePath)
+                    viewModel.selectCenterTab(.editor)
+                },
+                onRefresh: {
+                    viewModel.refreshGraph()
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var editorStageContent: some View {
+        if let selectedFile = viewModel.selectedFilePath {
+            EditorContainerView(
+                text: $viewModel.fileContent,
+                isModified: $viewModel.isEditorModified,
+                filePath: selectedFile,
+                onSave: {
+                    viewModel.saveCurrentFile()
+                }
+            )
+        } else if let repo = viewModel.selectedRepo {
+            // Selected repo welcome card
+            VStack(spacing: 14) {
+                Spacer()
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 40))
+                    .foregroundColor(.accentColor)
+                Text(repo.name)
+                    .font(.title2.bold())
+                Text("Branch: \(repo.branch) • \(repo.changedFiles.count) modified files")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 10) {
+                    Button("View Changes") {
+                        viewModel.showPanel(.changes)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Open Terminal") {
+                        viewModel.workbenchLayout.isBottomDockCollapsed = false
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("View Overview") {
+                        viewModel.selectCenterTab(.overview)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(NSColor.textBackgroundColor))
+        } else {
+            VStack(spacing: 14) {
+                Spacer()
+                Image(systemName: "macwindow")
+                    .font(.system(size: 44))
+                    .foregroundColor(.accentColor.opacity(0.7))
+                Text("miniOps Native Workbench")
+                    .font(.title2.bold())
+                Text("Select a repository from the left dock, or browse workspace tools.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 10) {
+                    Button("Open Workspace Overview") {
+                        viewModel.selectCenterTab(.overview)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Browse Tickets") {
+                        viewModel.showPanel(.tickets)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(NSColor.textBackgroundColor))
+        }
+    }
+
+    // MARK: - Right Dock View
+    private var rightDockView: some View {
+        VStack(spacing: 0) {
+            // Header with tab selector and collapse button
+            HStack(spacing: 6) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Picker("", selection: $viewModel.workbenchLayout.activeRightTab) {
+                        ForEach(viewModel.workbenchLayout.panels(in: .right), id: \.self) { panel in
+                            Text(panelTitle(panel)).tag(panel)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
+
+                movePanelMenu(viewModel.workbenchLayout.activeRightTab, from: .right)
+
+                Spacer()
+
+                Button(action: {
+                    withAnimation {
+                        viewModel.toggleRightDock()
+                    }
+                }) {
+                    Image(systemName: "xmark.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Close Tools Panel (Cmd+3)")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color(NSColor.controlBackgroundColor))
+
+            Divider()
+
+            // Content according to activeRightTab
+            if viewModel.workbenchLayout.panels(in: .right).isEmpty {
+                Text("Move a panel here from the left dock.").foregroundColor(.secondary).padding()
+                Spacer()
+            } else {
+                panelContent(viewModel.workbenchLayout.activeRightTab)
+            }
+
         }
         .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
     }
@@ -667,7 +715,7 @@ public struct MainWindowView: View {
     }
 
     // MARK: - Dividers
-    private var leftDividerBar: some View {
+    private func leftDividerBar(width: CGFloat, maximum: CGFloat) -> some View {
         Rectangle()
             .fill(isDraggingLeftDivider ? Color.accentColor : Color(NSColor.separatorColor))
             .frame(width: 4)
@@ -676,20 +724,23 @@ public struct MainWindowView: View {
                 if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
             }
             .gesture(
-                DragGesture()
+                DragGesture(coordinateSpace: .named("workbench"))
                     .onChanged { val in
                         isDraggingLeftDivider = true
-                        let newW = viewModel.workbenchLayout.leftDockWidth + Double(val.translation.width)
-                        viewModel.workbenchLayout.leftDockWidth = min(max(newW, 180), 450)
+                        if leftDragStart == nil { leftDragStart = width }
+                        viewModel.workbenchLayout.leftDockWidth = WorkbenchDockGeometry.dragged(
+                            start: leftDragStart ?? width, translation: val.translation.width,
+                            minimum: 180, maximum: min(450, maximum))
                     }
                     .onEnded { _ in
                         isDraggingLeftDivider = false
+                        leftDragStart = nil
                         viewModel.saveWorkbenchLayout()
                     }
             )
     }
 
-    private var rightDividerBar: some View {
+    private func rightDividerBar(width: CGFloat, maximum: CGFloat) -> some View {
         Rectangle()
             .fill(isDraggingRightDivider ? Color.accentColor : Color(NSColor.separatorColor))
             .frame(width: 4)
@@ -698,14 +749,17 @@ public struct MainWindowView: View {
                 if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
             }
             .gesture(
-                DragGesture()
+                DragGesture(coordinateSpace: .named("workbench"))
                     .onChanged { val in
                         isDraggingRightDivider = true
-                        let newW = viewModel.workbenchLayout.rightDockWidth - Double(val.translation.width)
-                        viewModel.workbenchLayout.rightDockWidth = min(max(newW, 200), 500)
+                        if rightDragStart == nil { rightDragStart = width }
+                        viewModel.workbenchLayout.rightDockWidth = WorkbenchDockGeometry.dragged(
+                            start: rightDragStart ?? width, translation: -val.translation.width,
+                            minimum: 200, maximum: min(500, maximum))
                     }
                     .onEnded { _ in
                         isDraggingRightDivider = false
+                        rightDragStart = nil
                         viewModel.saveWorkbenchLayout()
                     }
             )
@@ -720,16 +774,17 @@ public struct MainWindowView: View {
                 if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
             }
             .gesture(
-                DragGesture()
+                DragGesture(coordinateSpace: .named("workbench"))
                     .onChanged { val in
                         isDraggingBottomDivider = true
-                        let currentTermHeight = containerHeight * CGFloat(viewModel.workbenchLayout.bottomDockHeightRatio)
-                        let newHeight = currentTermHeight - val.translation.height
-                        let newRatio = Double(newHeight / containerHeight)
-                        viewModel.workbenchLayout.bottomDockHeightRatio = min(max(newRatio, 0.15), 0.70)
+                        if bottomDragStart == nil { bottomDragStart = viewModel.workbenchLayout.bottomDockHeightRatio }
+                        viewModel.workbenchLayout.bottomDockHeightRatio = WorkbenchDockGeometry.dragged(
+                            start: bottomDragStart ?? 0.35, translation: -val.translation.height / max(containerHeight, 1),
+                            minimum: 0.15, maximum: 0.70)
                     }
                     .onEnded { _ in
                         isDraggingBottomDivider = false
+                        bottomDragStart = nil
                         viewModel.saveWorkbenchLayout()
                     }
             )

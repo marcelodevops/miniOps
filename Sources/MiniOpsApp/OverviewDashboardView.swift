@@ -239,8 +239,7 @@ public struct OverviewDashboardView: View {
                             Button("Review") {
                                 viewModel.selectRepo(repo)
                                 viewModel.selectCenterTab(.editor)
-                                viewModel.workbenchLayout.activeRightTab = .changes
-                                viewModel.workbenchLayout.isRightDockCollapsed = false
+                                viewModel.showPanel(.changes)
                                 viewModel.isGitInspectorOpen = true
                             }
                             .controlSize(.small)

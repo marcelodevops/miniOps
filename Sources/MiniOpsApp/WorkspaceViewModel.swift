@@ -28,7 +28,16 @@ public final class WorkspaceViewModel: ObservableObject {
     @Published public var isSyncingTickets: Bool = false
     @Published public var ticketSyncStatus: String? = nil
     @Published public var graphData: GraphifyData? = nil
-    @Published public var workbenchLayout: WorkbenchLayoutState = WorkbenchLayoutState()
+    @Published public var workbenchLayout: WorkbenchLayoutState = WorkbenchLayoutState() {
+        didSet {
+            // Drag gestures persist their dimensions once, when the drag ends.
+            var previous = oldValue
+            previous.leftDockWidth = workbenchLayout.leftDockWidth
+            previous.rightDockWidth = workbenchLayout.rightDockWidth
+            previous.bottomDockHeightRatio = workbenchLayout.bottomDockHeightRatio
+            if !workspacePath.isEmpty && previous != workbenchLayout { saveWorkbenchLayout() }
+        }
+    }
     private var previouslyNotifiedWaitingPIDs: Set<Int> = []
     private let agentScanner = AgentScanner.shared
 
@@ -47,7 +56,6 @@ public final class WorkspaceViewModel: ObservableObject {
     public init() {
         let appState = stateStore.getAppState()
         self.hiddenRepoPaths = stateStore.getHiddenRepoPaths()
-        self.workbenchLayout = stateStore.getWorkbenchLayout()
         let initialWorkspace = appState.lastWorkspacePath ?? "~/repos"
         setWorkspace(path: initialWorkspace)
 
@@ -62,7 +70,10 @@ public final class WorkspaceViewModel: ObservableObject {
         fileContent = ""
         fileTree = nil
         let expanded = (path as NSString).expandingTildeInPath
+        let layout = stateStore.getWorkbenchLayout(workspacePath: expanded)
         self.workspacePath = expanded
+        self.workbenchLayout = layout
+        saveWorkbenchLayout()
         stateStore.saveWorkspacePath(expanded)
         refreshRepositories()
     }
@@ -217,7 +228,17 @@ public final class WorkspaceViewModel: ObservableObject {
     }
 
     public func saveWorkbenchLayout() {
-        stateStore.saveWorkbenchLayout(workbenchLayout)
+        stateStore.saveWorkbenchLayout(workbenchLayout, workspacePath: workspacePath)
+    }
+
+    public func showPanel(_ panel: WorkbenchPanel) {
+        if workbenchLayout.panels(in: .left).contains(panel) {
+            workbenchLayout.activeLeftTab = panel
+            workbenchLayout.isLeftDockCollapsed = false
+        } else {
+            workbenchLayout.activeRightTab = panel
+            workbenchLayout.isRightDockCollapsed = false
+        }
     }
 
     public func toggleLeftDock() {
@@ -347,8 +368,7 @@ public final class WorkspaceViewModel: ObservableObject {
         }
         NotificationCenter.default.addObserver(forName: .miniOpsToggleGitInspector, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.isGitInspectorOpen.toggle()
-                self?.saveCurrentRepoLayout()
+                self?.showPanel(.changes)
             }
         }
         NotificationCenter.default.addObserver(forName: .miniOpsRefreshGitStatus, object: nil, queue: .main) { [weak self] _ in

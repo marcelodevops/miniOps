@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import MiniOpsCore
 
 var passedCount = 0
@@ -1092,8 +1093,32 @@ do {
     let legacyStore = WorkspaceStateStore(customStorageURL: legacyURL)
     assertEqual(legacyStore.getIntegrationSettings().herdrModeEnabled, false, "Legacy state decodes with default integration settings")
 
-    // Keychain-backed secrets, isolated under a test-only service name.
-    let credentials = CredentialStore(service: "com.miniops.credentials.tests.\(UUID().uuidString)")
+    // Deterministic Keychain API backend; production still uses Security.framework.
+    var secrets: [String: Data] = [:]
+    let credentials = CredentialStore(
+        service: "com.miniops.credentials.tests.\(UUID().uuidString)",
+        updateItem: { query, attributes in
+            let key = (query as NSDictionary)[kSecAttrAccount] as! String
+            guard secrets[key] != nil else { return errSecItemNotFound }
+            secrets[key] = (attributes as NSDictionary)[kSecValueData] as? Data
+            return errSecSuccess
+        },
+        addItem: { query in
+            let values = query as NSDictionary
+            secrets[values[kSecAttrAccount] as! String] = values[kSecValueData] as? Data
+            return errSecSuccess
+        },
+        copyItem: { query, result in
+            let key = (query as NSDictionary)[kSecAttrAccount] as! String
+            guard let data = secrets[key] else { return errSecItemNotFound }
+            result.pointee = data as CFData
+            return errSecSuccess
+        },
+        deleteItem: { query in
+            let key = (query as NSDictionary)[kSecAttrAccount] as! String
+            return secrets.removeValue(forKey: key) == nil ? errSecItemNotFound : errSecSuccess
+        }
+    )
     assertEqual(credentials.hasSecret(for: .jira), false, "No Jira token stored initially")
     assert(credentials.saveSecret("jira-secret-1234", for: .jira), "Jira token saved to the Keychain")
     assertEqual(credentials.readSecret(for: .jira), "jira-secret-1234", "Jira token reads back")
@@ -1339,8 +1364,8 @@ do {
 
     // Enum cases and titles
     assertEqual(CenterTab.allCases.count, 4, "Four center stage tabs")
-    assertEqual(LeftDockTab.allCases.count, 2, "Two left dock tabs")
-    assertEqual(RightDockTab.allCases.count, 5, "Five right dock tabs")
+    assertEqual(defaultLayout.panels(in: .left).count, 2, "Two left dock tabs")
+    assertEqual(defaultLayout.panels(in: .right).count, 5, "Five right dock tabs")
 
     // Persistence through WorkspaceStateStore
     let storeURL = tempDir.appendingPathComponent("state.json")
@@ -1377,6 +1402,51 @@ do {
     let legacyStore = WorkspaceStateStore(customStorageURL: legacyURL)
     assertEqual(legacyStore.getWorkbenchLayout().activeCenterTab, CenterTab.editor, "Legacy state file decodes with default workbench layout")
     assertEqual(legacyStore.getWorkbenchLayout().isLeftDockCollapsed, false, "Legacy state file preserves default dock states")
+}
+
+// Regression checks for the panel-shell review.
+do {
+    for failure in [errSecNotAvailable, errSecParam, errSecAuthFailed, OSStatus(-34018)] {
+        let unavailable = CredentialStore(
+            updateItem: { _, _ in errSecItemNotFound }, addItem: { _ in failure },
+            copyItem: { _, _ in failure }, deleteItem: { _ in failure })
+        assert(!unavailable.saveSecret("test-only", for: .jira), "Failed Keychain save is not success")
+        assert(!unavailable.hasSecret(for: .jira), "Failed save never creates a memory fallback")
+        assert(!unavailable.deleteSecret(for: .jira), "Failed deletion is not success")
+        assert(!unavailable.saveSecret("", for: .jira), "Blank-token deletion propagates failure")
+    }
+    for width in [1000.0, 1280, 1600] {
+        let sizes = WorkbenchDockGeometry.resolve(width: width, left: 450, right: 500)
+        assert(width - sizes.left - sizes.right - 8 >= 359.99, "Docks reserve center width")
+    }
+    let hidden = WorkbenchDockGeometry.resolve(width: 1000, left: 0, right: 500)
+    assertEqual(hidden.left, 0, "Collapsed dock takes no space")
+    var position = 260.0
+    for delta in [10.0, 20, 30] {
+        position = WorkbenchDockGeometry.dragged(start: 260, translation: delta, minimum: 180, maximum: 450)
+    }
+    assertEqual(position, 290, "Repeated drag events use the original size")
+    assertEqual(WorkbenchDockGeometry.dragged(start: 300, translation: -40, minimum: 200, maximum: 500), 260, "Right divider direction")
+
+    var layout = WorkbenchLayoutState()
+    layout.move(.agents, to: .left)
+    assert(layout.panels(in: .left).contains(.agents), "Agents moves into left dock")
+    assert(!layout.panels(in: .right).contains(.agents), "Moved panel is not duplicated")
+    assertEqual(layout.activeLeftTab, .agents, "Destination selects moved panel")
+    layout.move(.tickets, to: .right)
+    assertEqual(layout.activeRightTab, .tickets, "Tickets can coexist with Agents in opposite docks")
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let store = WorkspaceStateStore(customStorageURL: url)
+    store.saveWorkspacePath("/tmp/workspace-a")
+    store.saveWorkbenchLayout(layout)
+    assertEqual(store.getWorkbenchLayout(workspacePath: "/tmp/workspace-a").activeLeftTab, .agents, "Legacy layout migrates to original workspace")
+    assertEqual(store.getWorkbenchLayout(workspacePath: "/tmp/workspace-b").activeLeftTab, .repos, "New workspace does not inherit legacy layout")
+    store.saveWorkbenchLayout(layout, workspacePath: "/tmp/workspace-a")
+    store.saveWorkbenchLayout(WorkbenchLayoutState(), workspacePath: "/tmp/workspace-b")
+    let reload = WorkspaceStateStore(customStorageURL: url)
+    assertEqual(reload.getWorkbenchLayout(workspacePath: "/tmp/workspace-a").activeRightTab, .tickets, "Panel placement and selection survive reload")
+    assertEqual(reload.getWorkbenchLayout(workspacePath: "/tmp/workspace-b").activeRightTab, .changes, "Workspace layout remains independent")
 }
 
 print("==================================================")

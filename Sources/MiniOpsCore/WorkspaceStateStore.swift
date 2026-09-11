@@ -42,6 +42,7 @@ public struct PersistedAppState: Codable {
     public var hiddenRepoPaths: Set<String>
     public var customRepoPaths: Set<String>
     public var integrationSettings: IntegrationSettings
+    public var workspaceLayouts: [String: WorkbenchLayoutState] = [:]
     public var workbenchLayout: WorkbenchLayoutState
 
     public init(
@@ -69,6 +70,7 @@ public struct PersistedAppState: Codable {
         case hiddenRepoPaths
         case customRepoPaths
         case integrationSettings
+        case workspaceLayouts
         case workbenchLayout
     }
 
@@ -80,6 +82,7 @@ public struct PersistedAppState: Codable {
         self.hiddenRepoPaths = try container.decodeIfPresent(Set<String>.self, forKey: .hiddenRepoPaths) ?? []
         self.customRepoPaths = try container.decodeIfPresent(Set<String>.self, forKey: .customRepoPaths) ?? []
         self.integrationSettings = try container.decodeIfPresent(IntegrationSettings.self, forKey: .integrationSettings) ?? IntegrationSettings()
+        self.workspaceLayouts = try container.decodeIfPresent([String: WorkbenchLayoutState].self, forKey: .workspaceLayouts) ?? [:]
         self.workbenchLayout = try container.decodeIfPresent(WorkbenchLayoutState.self, forKey: .workbenchLayout) ?? WorkbenchLayoutState()
     }
 }
@@ -201,13 +204,25 @@ public final class WorkspaceStateStore: @unchecked Sendable {
         }
     }
 
-    public func getWorkbenchLayout() -> WorkbenchLayoutState {
-        queue.sync { cachedState.workbenchLayout }
+    public func getWorkbenchLayout(workspacePath: String? = nil) -> WorkbenchLayoutState {
+        queue.sync {
+            guard let path = workspacePath else { return cachedState.workbenchLayout }
+            if let layout = cachedState.workspaceLayouts[standardize(path)] { return layout }
+            // Migrate the legacy global layout only to its original workspace.
+            if cachedState.workspaceLayouts.isEmpty,
+               let previous = cachedState.lastWorkspacePath,
+               standardize(previous) == standardize(path) { return cachedState.workbenchLayout }
+            return WorkbenchLayoutState()
+        }
     }
 
-    public func saveWorkbenchLayout(_ layout: WorkbenchLayoutState) {
+    public func saveWorkbenchLayout(_ layout: WorkbenchLayoutState, workspacePath: String? = nil) {
         queue.sync {
-            cachedState.workbenchLayout = layout
+            if let path = workspacePath {
+                cachedState.workspaceLayouts[standardize(path)] = layout
+            } else {
+                cachedState.workbenchLayout = layout
+            }
             persistToDisk()
         }
     }

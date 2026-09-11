@@ -99,12 +99,9 @@ public enum CenterTab: String, Codable, CaseIterable, Sendable {
     case graph = "Graph"
 }
 
-public enum LeftDockTab: String, Codable, CaseIterable, Sendable {
+public enum WorkbenchPanel: String, Codable, CaseIterable, Sendable {
     case repos = "Repositories"
     case tickets = "Tickets"
-}
-
-public enum RightDockTab: String, Codable, CaseIterable, Sendable {
     case changes = "Changes"
     case agents = "Agents"
     case stashes = "Stashes"
@@ -112,7 +109,12 @@ public enum RightDockTab: String, Codable, CaseIterable, Sendable {
     case notes = "Notes"
 }
 
+public typealias LeftDockTab = WorkbenchPanel
+public typealias RightDockTab = WorkbenchPanel
+public enum SideDock: String, Codable, Sendable { case left, right }
+
 public struct WorkbenchLayoutState: Codable, Hashable, Sendable {
+    public var panelLocations: [String: SideDock]?
     public var activeCenterTab: CenterTab
     public var activeLeftTab: LeftDockTab
     public var activeRightTab: RightDockTab
@@ -122,6 +124,32 @@ public struct WorkbenchLayoutState: Codable, Hashable, Sendable {
     public var leftDockWidth: Double
     public var rightDockWidth: Double
     public var bottomDockHeightRatio: Double
+
+    public func panels(in dock: SideDock) -> [WorkbenchPanel] {
+        WorkbenchPanel.allCases.filter { panel in
+            let defaultDock: SideDock = [.repos, .tickets].contains(panel) ? .left : .right
+            return (panelLocations?[panel.rawValue] ?? defaultDock) == dock
+        }
+    }
+
+    public mutating func move(_ panel: WorkbenchPanel, to dock: SideDock) {
+        var locations = panelLocations ?? [:]
+        locations[panel.rawValue] = dock
+        panelLocations = locations
+        if dock == .left {
+            activeLeftTab = panel
+            isLeftDockCollapsed = false
+            if activeRightTab == panel {
+                activeRightTab = panels(in: .right).first ?? .changes
+            }
+        } else {
+            activeRightTab = panel
+            isRightDockCollapsed = false
+            if activeLeftTab == panel {
+                activeLeftTab = panels(in: .left).first ?? .repos
+            }
+        }
+    }
 
     public init(
         activeCenterTab: CenterTab = .editor,

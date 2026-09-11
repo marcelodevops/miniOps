@@ -54,7 +54,7 @@ public struct TicketNavigatorView: View {
                 content
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var header: some View {
@@ -142,7 +142,7 @@ public struct TicketNavigatorView: View {
                     }
                 }
             }
-            .frame(maxHeight: 220)
+            .frame(maxHeight: .infinity)
         }
     }
 }

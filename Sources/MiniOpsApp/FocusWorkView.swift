@@ -189,8 +189,7 @@ public struct FocusWorkView: View {
 
                     Button("Open Changes") {
                         viewModel.selectCenterTab(.editor)
-                        viewModel.workbenchLayout.activeRightTab = .changes
-                        viewModel.workbenchLayout.isRightDockCollapsed = false
+                        viewModel.showPanel(.changes)
                     }
                     .controlSize(.small)
                 }
