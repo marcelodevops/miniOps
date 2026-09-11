@@ -6,16 +6,23 @@ public struct AgentInspectorView: View {
     public let agents: [AgentInfo]
     public let onSelectRepo: (String) -> Void
     public let onRefresh: () -> Void
+    public var onSelectAgent: ((AgentInfo) -> Void)?
 
     @State private var inspectingAgent: AgentInfo?
     @State private var liveOutputText: String = ""
     @State private var isLoadingOutput: Bool = false
     @State private var herdrStatus: HerdrStatusInfo = HerdrService.shared.getHerdrStatus()
 
-    public init(agents: [AgentInfo], onSelectRepo: @escaping (String) -> Void, onRefresh: @escaping () -> Void) {
+    public init(
+        agents: [AgentInfo],
+        onSelectRepo: @escaping (String) -> Void,
+        onRefresh: @escaping () -> Void,
+        onSelectAgent: ((AgentInfo) -> Void)? = nil
+    ) {
         self.agents = agents
         self.onSelectRepo = onSelectRepo
         self.onRefresh = onRefresh
+        self.onSelectAgent = onSelectAgent
     }
 
     public var body: some View {
@@ -166,6 +173,14 @@ public struct AgentInspectorView: View {
                             }
 
                             Spacer()
+
+                            if let onSelectAgent {
+                                Button("Detail") {
+                                    onSelectAgent(agent)
+                                }
+                                .buttonStyle(.borderless)
+                                .font(.system(size: 10, weight: .semibold))
+                            }
 
                             if let path = agent.repoPath {
                                 Button("Focus Repo") {

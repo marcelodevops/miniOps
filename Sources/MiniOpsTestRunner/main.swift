@@ -1363,7 +1363,7 @@ do {
     assertEqual(defaultLayout.activeRightTab, RightDockTab.changes, "Default right tab is changes")
 
     // Enum cases and titles
-    assertEqual(CenterTab.allCases.count, 5, "Five center stage tabs")
+    assertEqual(CenterTab.allCases.count, 7, "Seven center stage tabs")
     assertEqual(defaultLayout.panels(in: .left).count, 2, "Two left dock tabs")
     assertEqual(defaultLayout.panels(in: .right).count, 5, "Five right dock tabs")
 
@@ -1722,6 +1722,184 @@ do {
     // Repo B's selection must remain intact and isolated:
     let stateBAfterCommitA = store.getRepoState(repoPath: repoURLB.path)
     assertEqual(stateBAfterCommitA.selectedFilesForCommit, ["b_keep.txt"], "Repo A commit does not clear Repo B's selection")
+}
+
+// Test 31: End-to-End ViewModel Workflow Validation (Two Repos, Delayed Commit & External Edit)
+print("Test 31: End-to-End ViewModel Workflow Validation (Two Repos, Delayed Commit & External Edit)")
+do {
+    let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+    // 1. Setup two Git repositories in tempRoot
+    let repoDirA = tempRoot.appendingPathComponent("repoA")
+    let repoDirB = tempRoot.appendingPathComponent("repoB")
+    try! FileManager.default.createDirectory(at: repoDirA, withIntermediateDirectories: true)
+    try! FileManager.default.createDirectory(at: repoDirB, withIntermediateDirectories: true)
+
+    _ = runGit(args: ["init", "-b", "main"], in: repoDirA.path)
+    _ = runGit(args: ["config", "user.name", "Test Runner"], in: repoDirA.path)
+    _ = runGit(args: ["config", "user.email", "test@example.com"], in: repoDirA.path)
+    _ = runGit(args: ["config", "commit.gpgsign", "false"], in: repoDirA.path)
+
+    _ = runGit(args: ["init", "-b", "main"], in: repoDirB.path)
+    _ = runGit(args: ["config", "user.name", "Test Runner"], in: repoDirB.path)
+    _ = runGit(args: ["config", "user.email", "test@example.com"], in: repoDirB.path)
+    _ = runGit(args: ["config", "commit.gpgsign", "false"], in: repoDirB.path)
+
+    // Initial commit in Repo A
+    let fileA1 = repoDirA.appendingPathComponent("fileA1.txt")
+    let fileA2 = repoDirA.appendingPathComponent("fileA2.txt")
+    try! "version 1\n".write(to: fileA1, atomically: true, encoding: .utf8)
+    _ = runGit(args: ["add", "fileA1.txt"], in: repoDirA.path)
+    _ = runGit(args: ["commit", "-m", "Initial commit in A"], in: repoDirA.path)
+
+    // Initial commit in Repo B
+    let fileB1 = repoDirB.appendingPathComponent("fileB1.txt")
+    try! "initial b\n".write(to: fileB1, atomically: true, encoding: .utf8)
+    _ = runGit(args: ["add", "fileB1.txt"], in: repoDirB.path)
+    _ = runGit(args: ["commit", "-m", "Initial commit in B"], in: repoDirB.path)
+
+    // Create modified and uncommitted files in Repo A
+    try! "version 1\nversion 2\n".write(to: fileA1, atomically: true, encoding: .utf8)
+    try! "uncommitted file A2\n".write(to: fileA2, atomically: true, encoding: .utf8)
+
+    // Create modified file in Repo B
+    try! "initial b\nmodified b1\n".write(to: fileB1, atomically: true, encoding: .utf8)
+
+    // Initialize custom WorkspaceStateStore and WorkspaceViewModel
+    let storeURL = tempRoot.appendingPathComponent("workflow_state.json")
+    let customStore = WorkspaceStateStore(customStorageURL: storeURL)
+
+    MainActor.assumeIsolated {
+        let viewModel = WorkspaceViewModel(stateStore: customStore)
+        viewModel.setWorkspace(path: tempRoot.path)
+
+        // Drain runloop to allow scan to complete
+        var retries = 0
+        while (viewModel.isScanning || viewModel.repositories.count < 2) && retries < 50 {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            retries += 1
+        }
+        assertEqual(viewModel.repositories.count, 2, "Discovers both temporary repositories")
+
+        guard let repoAInfo = viewModel.repositories.first(where: { $0.path == repoDirA.path }),
+              let repoBInfo = viewModel.repositories.first(where: { $0.path == repoDirB.path }) else {
+            fatalError("Repositories not found")
+        }
+
+        // Step 1: Select Repo A and verify initial state
+        viewModel.selectRepo(repoAInfo)
+        assertEqual(viewModel.selectedRepo?.path, repoDirA.path, "Repo A is selected")
+
+        // Wait for repo status to refresh
+        retries = 0
+        while (viewModel.selectedRepo?.changedFiles.isEmpty ?? true) && retries < 30 {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            retries += 1
+        }
+        let changedFilesA = viewModel.selectedRepo?.changedFiles ?? []
+        assert(changedFilesA.contains(where: { $0.path == "fileA1.txt" }), "fileA1.txt is detected as changed")
+        assert(changedFilesA.contains(where: { $0.path == "fileA2.txt" }), "fileA2.txt is detected as untracked/changed")
+
+        // Select only fileA1.txt for commit and inspect diff
+        viewModel.setCommitSelection(["fileA1.txt"])
+        assertEqual(viewModel.selectedFilesForCommit, ["fileA1.txt"], "Only fileA1.txt is selected for commit, fileA2.txt excluded")
+        viewModel.inspectDiff(filePath: "fileA1.txt")
+        assertEqual(viewModel.activeDiffFile, "fileA1.txt", "Center stage targets fileA1.txt diff")
+        assertEqual(viewModel.workbenchLayout.activeCenterTab, .diff, "Center tab switches to .diff")
+
+        let initialRev = viewModel.statusRevision
+
+        // Step 2: Externally edit fileA1.txt (same file, same modified status, new content)
+        try! "version 1\nversion 2\nversion 3\n".write(to: fileA1, atomically: true, encoding: .utf8)
+        viewModel.refreshCurrentRepoStatus()
+
+        // Wait for status refresh to increment statusRevision
+        retries = 0
+        while viewModel.statusRevision == initialRev && retries < 30 {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            retries += 1
+        }
+        assert(viewModel.statusRevision > initialRev, "Status refresh increments statusRevision after external edit")
+
+        let freshDiff = GitService.shared.getDiff(repoPath: repoDirA.path, filePath: "fileA1.txt")
+        assert(freshDiff.contains("+version 3"), "Diff recomputed reflects the external modification")
+        assertEqual(viewModel.selectedFilesForCommit, ["fileA1.txt"], "Commit selection survives status refresh")
+
+        // Step 3: Switch to Repo B
+        viewModel.selectRepo(repoBInfo)
+        assertEqual(viewModel.selectedRepo?.path, repoDirB.path, "Switched to Repo B")
+
+        // Wait for repo B status refresh
+        retries = 0
+        while (viewModel.selectedRepo?.changedFiles.isEmpty ?? true) && retries < 30 {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            retries += 1
+        }
+        viewModel.setCommitSelection(["fileB1.txt"])
+        assertEqual(viewModel.selectedFilesForCommit, ["fileB1.txt"], "Repo B has fileB1.txt selected")
+
+        // Step 4: Trigger Delayed Selective Commit targeting Repo A while Repo B is active
+        var commitFinished = false
+        var commitSuccess = false
+        viewModel.executeSelectiveCommit(
+            repoPath: repoDirA.path,
+            message: "Delayed selective commit in A",
+            selectedPaths: ["fileA1.txt"]
+        ) { result in
+            commitFinished = true
+            commitSuccess = result.success
+        }
+
+        retries = 0
+        while !commitFinished && retries < 50 {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            retries += 1
+        }
+        assert(commitFinished && commitSuccess, "Delayed commit for Repo A succeeded")
+
+        // Invariants verification after Repo A commit:
+        // 1. Repo B is STILL the active repo in viewModel
+        assertEqual(viewModel.selectedRepo?.path, repoDirB.path, "Active repo is still Repo B")
+        // 2. Repo B's selection MUST NOT have been cleared by Repo A's commit!
+        assertEqual(viewModel.selectedFilesForCommit, ["fileB1.txt"], "Repo B's active selection is preserved and isolated from Repo A's commit")
+        // 3. Repo A's persisted state in store has its selection cleared
+        let persistedStateA = customStore.getRepoState(repoPath: repoDirA.path)
+        assertEqual(persistedStateA.selectedFilesForCommit, [], "Repo A persisted selection was cleared upon its commit")
+        // 4. In Repo A Git history, fileA1.txt is committed, while fileA2.txt remains uncommitted
+        let logA = runGit(args: ["log", "-1", "--pretty=%s"], in: repoDirA.path)
+        assertEqual(logA.trimmingCharacters(in: .whitespacesAndNewlines), "Delayed selective commit in A", "Git HEAD reflects Repo A commit")
+        let committedFilesInA = runGit(args: ["show", "--pretty=", "--name-only", "HEAD"], in: repoDirA.path)
+        assert(committedFilesInA.contains("fileA1.txt"), "fileA1.txt was committed")
+        assert(!committedFilesInA.contains("fileA2.txt"), "fileA2.txt was excluded from commit")
+        let statusA = runGit(args: ["status", "--porcelain"], in: repoDirA.path)
+        assert(statusA.contains("fileA2.txt"), "fileA2.txt remains in working tree of Repo A")
+
+        // Step 5: Switch back to Repo A and verify restored clean selection
+        viewModel.selectRepo(repoAInfo)
+        assertEqual(viewModel.selectedRepo?.path, repoDirA.path, "Switched back to Repo A")
+        retries = 0
+        while (viewModel.selectedRepo?.changedFiles.isEmpty ?? true) && retries < 30 {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            retries += 1
+        }
+        assertEqual(viewModel.selectedFilesForCommit, [], "Repo A selection is empty after switching back")
+
+        // Step 6: Test Center Stage Detail Tabs (Ticket & Agent)
+        let ticket = TicketInfo(key: "OPS-999", summary: "Parity Workflow Ticket", priority: "High", localPath: fileA2.path)
+        viewModel.selectTicket(ticket)
+        assertEqual(viewModel.selectedTicket?.key, "OPS-999", "Ticket selected in viewModel")
+        assertEqual(viewModel.workbenchLayout.activeCenterTab, .ticket, "Active center tab switches to .ticket")
+
+        let agent = AgentInfo(pid: 88888, tool: "TestRunnerAgent", status: "running", isWaitingForInput: false, elapsed: "42s", repoPath: repoDirA.path)
+        viewModel.selectAgent(agent)
+        assertEqual(viewModel.selectedAgent?.pid, 88888, "Agent selected in viewModel")
+        assertEqual(viewModel.workbenchLayout.activeCenterTab, .agent, "Active center tab switches to .agent")
+
+        viewModel.selectCenterTab(.editor)
+        assertEqual(viewModel.workbenchLayout.activeCenterTab, .editor, "Active center tab switches back to .editor")
+    }
 }
 
 print("==================================================")

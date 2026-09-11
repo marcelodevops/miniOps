@@ -97,6 +97,19 @@ struct MiniOpsApp: App {
                 }
                 .keyboardShortcut("e", modifiers: .command)
 
+                Button("Center: Diff Inspector") {
+                    sharedViewModel.selectCenterTab(.diff)
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+
+                Button("Center: Ticket Detail") {
+                    sharedViewModel.selectCenterTab(.ticket)
+                }
+
+                Button("Center: Agent Detail") {
+                    sharedViewModel.selectCenterTab(.agent)
+                }
+
                 Button("Center: Overview Dashboard") {
                     sharedViewModel.selectCenterTab(.overview)
                 }
@@ -157,21 +170,7 @@ struct MiniOpsApp: App {
     }
 }
 
-extension Notification.Name {
-    static let miniOpsOpenWorkspace = Notification.Name("miniOpsOpenWorkspace")
-    static let miniOpsSaveFile = Notification.Name("miniOpsSaveFile")
-    static let miniOpsToggleGitInspector = Notification.Name("miniOpsToggleGitInspector")
-    static let miniOpsReconcile = Notification.Name("miniOpsReconcile")
-    static let miniOpsRefreshGitStatus = Notification.Name("miniOpsRefreshGitStatus")
-    static let miniOpsToggleTerminal = Notification.Name("miniOpsToggleTerminal")
-    static let miniOpsToggleEditor = Notification.Name("miniOpsToggleEditor")
-    static let miniOpsCloneRepo = Notification.Name("miniOpsCloneRepo")
-    static let miniOpsOpenSettings = Notification.Name("miniOpsOpenSettings")
-    static let miniOpsFetch = Notification.Name("miniOpsFetch")
-    static let miniOpsPull = Notification.Name("miniOpsPull")
-    static let miniOpsPush = Notification.Name("miniOpsPush")
-    static let miniOpsAddCommitPush = Notification.Name("miniOpsAddCommitPush")
-}
+
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     weak var viewModel: WorkspaceViewModel?

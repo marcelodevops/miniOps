@@ -24,6 +24,9 @@ public struct GitChangesView: View {
     public var onOpenWorktrees: (() -> Void)?
     public var onOpenBatchGit: (() -> Void)?
     public var onInspectDiffInCenter: ((String) -> Void)?
+    public var onExecuteCommit: ((_ repoPath: String, _ message: String, _ selectedPaths: [String], _ completion: @escaping (GitOperationResult) -> Void) -> Void)?
+    public var onExecuteReconcile: ((_ repoPath: String, _ message: String, _ selectedPaths: [String], _ completion: @escaping (GitOperationResult) -> Void) -> Void)?
+    public var currentRepoPath: (() -> String?)?
 
     public init(
         repoPath: String,
@@ -33,7 +36,10 @@ public struct GitChangesView: View {
         onOpenStashes: (() -> Void)? = nil,
         onOpenWorktrees: (() -> Void)? = nil,
         onOpenBatchGit: (() -> Void)? = nil,
-        onInspectDiffInCenter: ((String) -> Void)? = nil
+        onInspectDiffInCenter: ((String) -> Void)? = nil,
+        onExecuteCommit: ((_ repoPath: String, _ message: String, _ selectedPaths: [String], _ completion: @escaping (GitOperationResult) -> Void) -> Void)? = nil,
+        onExecuteReconcile: ((_ repoPath: String, _ message: String, _ selectedPaths: [String], _ completion: @escaping (GitOperationResult) -> Void) -> Void)? = nil,
+        currentRepoPath: (() -> String?)? = nil
     ) {
         self.repoPath = repoPath
         self.changes = changes
@@ -43,6 +49,9 @@ public struct GitChangesView: View {
         self.onOpenWorktrees = onOpenWorktrees
         self.onOpenBatchGit = onOpenBatchGit
         self.onInspectDiffInCenter = onInspectDiffInCenter
+        self.onExecuteCommit = onExecuteCommit
+        self.onExecuteReconcile = onExecuteReconcile
+        self.currentRepoPath = currentRepoPath
     }
 
     public var body: some View {
@@ -76,6 +85,24 @@ public struct GitChangesView: View {
         .onAppear {
             if let first = changes.first {
                 loadDiff(for: first.path)
+            }
+        }
+        .onChange(of: repoPath) { _, _ in
+            diffRequestToken = UUID()
+            currentlyViewingDiffFile = nil
+            diffContent = ""
+            operationMessage = nil
+            isErrorMessage = false
+        }
+        .onChange(of: changes) { _, newChanges in
+            if let file = currentlyViewingDiffFile {
+                if !newChanges.contains(where: { $0.path == file }) {
+                    currentlyViewingDiffFile = nil
+                    diffContent = ""
+                    diffRequestToken = UUID()
+                } else {
+                    loadDiff(for: file)
+                }
             }
         }
     }
@@ -369,6 +396,7 @@ public struct GitChangesView: View {
             let diff = GitService.shared.getDiff(repoPath: targetRepo, filePath: path)
             DispatchQueue.main.async {
                 guard self.diffRequestToken == token else { return }
+                guard (self.currentRepoPath?() ?? self.repoPath) == targetRepo else { return }
                 self.diffContent = diff
             }
         }
@@ -376,38 +404,50 @@ public struct GitChangesView: View {
 
     private func executeSelectiveCommit() {
         let targetRepoPath = repoPath
+        let message = commitMessage
+        let selectedPaths = Array(selectedFilesForCommit)
         isCommitting = true
         operationMessage = "Committing selected files..."
         isErrorMessage = false
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let result = GitService.shared.selectiveCommit(
-                repoPath: targetRepoPath,
-                message: commitMessage,
-                selectedPaths: Array(selectedFilesForCommit)
-            )
+        let handleResult: (GitOperationResult) -> Void = { result in
+            isCommitting = false
+            let isCurrent = (currentRepoPath?() ?? self.repoPath) == targetRepoPath
+            if result.success {
+                if isCurrent {
+                    operationMessage = "Commit successful!"
+                    isErrorMessage = false
+                    commitMessage = ""
+                    currentlyViewingDiffFile = nil
+                    diffContent = ""
+                    onGitOperationDone()
+                }
+            } else {
+                if isCurrent {
+                    operationMessage = result.error ?? "Commit failed"
+                    isErrorMessage = true
+                }
+            }
+        }
 
-            DispatchQueue.main.async {
-                isCommitting = false
-                if result.success {
-                    var state = WorkspaceStateStore.shared.getRepoState(repoPath: targetRepoPath)
-                    state.selectedFilesForCommit = []
-                    WorkspaceStateStore.shared.saveRepoState(repoPath: targetRepoPath, state: state)
-
-                    if self.repoPath == targetRepoPath {
-                        operationMessage = "Commit successful!"
-                        isErrorMessage = false
-                        commitMessage = ""
-                        selectedFilesForCommit.removeAll()
-                        currentlyViewingDiffFile = nil
-                        diffContent = ""
-                        onGitOperationDone()
+        if let onExecuteCommit {
+            onExecuteCommit(targetRepoPath, message, selectedPaths) { result in
+                handleResult(result)
+            }
+        } else {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = GitService.shared.selectiveCommit(
+                    repoPath: targetRepoPath,
+                    message: message,
+                    selectedPaths: selectedPaths
+                )
+                DispatchQueue.main.async {
+                    if result.success {
+                        var state = WorkspaceStateStore.shared.getRepoState(repoPath: targetRepoPath)
+                        state.selectedFilesForCommit = []
+                        WorkspaceStateStore.shared.saveRepoState(repoPath: targetRepoPath, state: state)
                     }
-                } else {
-                    if self.repoPath == targetRepoPath {
-                        operationMessage = result.error ?? "Commit failed"
-                        isErrorMessage = true
-                    }
+                    handleResult(result)
                 }
             }
         }
@@ -415,46 +455,57 @@ public struct GitChangesView: View {
 
     private func executeReconcile() {
         let targetRepoPath = repoPath
+        let selectedPaths = Array(selectedFilesForCommit)
+        let message = commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "reconciling latest changes" : commitMessage
         isCommitting = true
         operationMessage = "Reconciling changes (commit & push)..."
         isErrorMessage = false
 
-        let selected = Array(selectedFilesForCommit)
-        let msg = commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "reconciling latest changes" : commitMessage
+        let handleResult: (GitOperationResult) -> Void = { result in
+            isCommitting = false
+            let isCurrent = (currentRepoPath?() ?? self.repoPath) == targetRepoPath
+            if result.success {
+                if isCurrent {
+                    operationMessage = result.output.isEmpty ? "Reconciled successfully!" : result.output
+                    isErrorMessage = false
+                    commitMessage = ""
+                    currentlyViewingDiffFile = nil
+                    diffContent = ""
+                    onGitOperationDone()
+                }
+            } else if result.partialSuccess {
+                if isCurrent {
+                    operationMessage = "Partial success: \(result.error ?? "")"
+                    isErrorMessage = true
+                    commitMessage = ""
+                    onGitOperationDone()
+                }
+            } else {
+                if isCurrent {
+                    operationMessage = result.error ?? "Reconcile failed"
+                    isErrorMessage = true
+                }
+            }
+        }
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let result = GitService.shared.reconcile(
-                repoPath: targetRepoPath,
-                message: msg,
-                selectedPaths: selected
-            )
-
-            DispatchQueue.main.async {
-                isCommitting = false
-                if result.success {
-                    var state = WorkspaceStateStore.shared.getRepoState(repoPath: targetRepoPath)
-                    state.selectedFilesForCommit = []
-                    WorkspaceStateStore.shared.saveRepoState(repoPath: targetRepoPath, state: state)
-
-                    if self.repoPath == targetRepoPath {
-                        operationMessage = result.output
-                        isErrorMessage = false
-                        commitMessage = ""
-                        selectedFilesForCommit.removeAll()
-                        currentlyViewingDiffFile = nil
-                        diffContent = ""
-                        onGitOperationDone()
+        if let onExecuteReconcile {
+            onExecuteReconcile(targetRepoPath, message, selectedPaths) { result in
+                handleResult(result)
+            }
+        } else {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = GitService.shared.reconcile(
+                    repoPath: targetRepoPath,
+                    message: message,
+                    selectedPaths: selectedPaths
+                )
+                DispatchQueue.main.async {
+                    if result.success {
+                        var state = WorkspaceStateStore.shared.getRepoState(repoPath: targetRepoPath)
+                        state.selectedFilesForCommit = []
+                        WorkspaceStateStore.shared.saveRepoState(repoPath: targetRepoPath, state: state)
                     }
-                } else {
-                    if self.repoPath == targetRepoPath {
-                        if result.partialSuccess {
-                            operationMessage = "Partial success: \(result.error ?? "")"
-                        } else {
-                            operationMessage = result.error ?? "Reconcile failed"
-                        }
-                        isErrorMessage = true
-                        onGitOperationDone()
-                    }
+                    handleResult(result)
                 }
             }
         }

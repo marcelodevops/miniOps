@@ -119,6 +119,8 @@ public struct RepoLayoutState: Codable, Hashable, Sendable {
 public enum CenterTab: String, Codable, CaseIterable, Sendable {
     case editor = "Editor"
     case diff = "Diff"
+    case ticket = "Ticket"
+    case agent = "Agent"
     case overview = "Overview"
     case focus = "Focus"
     case graph = "Graph"

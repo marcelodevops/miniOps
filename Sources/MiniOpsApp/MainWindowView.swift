@@ -424,7 +424,7 @@ public struct MainWindowView: View {
                     isSyncing: viewModel.isSyncingTickets,
                     syncStatus: viewModel.ticketSyncStatus,
                     onSelectTicket: { ticket in
-                        viewModel.openTicket(ticket)
+                        viewModel.selectTicket(ticket)
                     },
                     onCreateBranch: { ticket in
                         viewModel.createBranchForTicket(ticket)
@@ -454,8 +454,18 @@ public struct MainWindowView: View {
                         },
                         onInspectDiffInCenter: { file in
                             viewModel.inspectDiff(filePath: file)
+                        },
+                        onExecuteCommit: { repoPath, message, selected, completion in
+                            viewModel.executeSelectiveCommit(repoPath: repoPath, message: message, selectedPaths: selected, completion: completion)
+                        },
+                        onExecuteReconcile: { repoPath, message, selected, completion in
+                            viewModel.executeReconcile(repoPath: repoPath, message: message, selectedPaths: selected, completion: completion)
+                        },
+                        currentRepoPath: {
+                            viewModel.selectedRepo?.path
                         }
                     )
+                    .id(repo.path)
                 } else {
                     noRepoPlaceholder(for: "Git Changes")
                 }
@@ -470,6 +480,9 @@ public struct MainWindowView: View {
                     },
                     onRefresh: {
                         viewModel.refreshAgents()
+                    },
+                    onSelectAgent: { agent in
+                        viewModel.selectAgent(agent)
                     }
                 )
 
@@ -538,6 +551,10 @@ public struct MainWindowView: View {
             editorStageContent
         case .diff:
             CenterDiffStageView(viewModel: viewModel)
+        case .ticket:
+            TicketDetailStageView(viewModel: viewModel)
+        case .agent:
+            AgentDetailStageView(viewModel: viewModel)
         case .overview:
             OverviewDashboardView(viewModel: viewModel)
         case .focus:

@@ -14,6 +14,7 @@ public struct CenterDiffStageView: View {
     @State private var isLoadingDiff: Bool = false
     @State private var loadedDiffFile: String? = nil
     @State private var loadedRepoPath: String? = nil
+    @State private var loadedRevision: Int = -1
     @State private var diffRequestToken: UUID = UUID()
 
     public init(viewModel: WorkspaceViewModel) {
@@ -44,12 +45,15 @@ public struct CenterDiffStageView: View {
             ensureActiveDiffFile()
             triggerDiffLoadIfNecessary()
         }
-        .onChange(of: viewModel.selectedRepo?.path) { _ in
+        .onChange(of: viewModel.selectedRepo?.path) { _, _ in
             ensureActiveDiffFile()
+            triggerDiffLoadIfNecessary(force: true)
+        }
+        .onChange(of: viewModel.activeDiffFile) { _, _ in
             triggerDiffLoadIfNecessary()
         }
-        .onChange(of: viewModel.activeDiffFile) { _ in
-            triggerDiffLoadIfNecessary()
+        .onChange(of: viewModel.statusRevision) { _, _ in
+            triggerDiffLoadIfNecessary(force: true)
         }
     }
 
@@ -286,22 +290,23 @@ public struct CenterDiffStageView: View {
         }
     }
 
-    private func triggerDiffLoadIfNecessary() {
+    private func triggerDiffLoadIfNecessary(force: Bool = false) {
         guard let repo = viewModel.selectedRepo, let active = currentActiveFile(for: repo) else {
             diffContent = ""
             loadedDiffFile = nil
             loadedRepoPath = nil
+            loadedRevision = -1
             return
         }
 
-        if loadedRepoPath == repo.path && loadedDiffFile == active {
+        if !force && loadedRepoPath == repo.path && loadedDiffFile == active && loadedRevision == viewModel.statusRevision {
             return
         }
 
-        loadDiffAsynchronously(repoPath: repo.path, filePath: active)
+        loadDiffAsynchronously(repoPath: repo.path, filePath: active, revision: viewModel.statusRevision)
     }
 
-    private func loadDiffAsynchronously(repoPath: String, filePath: String) {
+    private func loadDiffAsynchronously(repoPath: String, filePath: String, revision: Int) {
         let token = UUID()
         self.diffRequestToken = token
         self.isLoadingDiff = true
@@ -313,6 +318,7 @@ public struct CenterDiffStageView: View {
                 self.diffContent = diff
                 self.loadedDiffFile = filePath
                 self.loadedRepoPath = repoPath
+                self.loadedRevision = revision
                 self.isLoadingDiff = false
             }
         }

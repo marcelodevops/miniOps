@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import MiniOpsCore
 
 @MainActor
 public final class WorkspaceViewModel: ObservableObject {
@@ -53,15 +52,19 @@ public final class WorkspaceViewModel: ObservableObject {
     @Published public var isShowingCloneSheet: Bool = false
     @Published public var isShowingSettingsSheet: Bool = false
     @Published public var hiddenRepoPaths: Set<String> = []
+    @Published public var statusRevision: Int = 0
+    @Published public var selectedTicket: TicketInfo? = nil
+    @Published public var selectedAgent: AgentInfo? = nil
     private var scanGeneration = 0
     private var loadedFileContent: String = ""
 
     private let scanner = WorkspaceScanner.shared
     private let gitService = GitService.shared
     private let fileSystem = FileSystemService.shared
-    private let stateStore = WorkspaceStateStore.shared
+    public let stateStore: WorkspaceStateStore
 
-    public init() {
+    public init(stateStore: WorkspaceStateStore = .shared) {
+        self.stateStore = stateStore
         let appState = stateStore.getAppState()
         self.hiddenRepoPaths = stateStore.getHiddenRepoPaths()
         let initialWorkspace = appState.lastWorkspacePath ?? "~/repos"
@@ -93,7 +96,7 @@ public final class WorkspaceViewModel: ObservableObject {
         let path = workspacePath
         isScanning = true
         let customPaths = stateStore.getCustomRepoPaths()
-        DispatchQueue.global(qos: .userInitiated).async { [scanner] in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, scanner] in
             let allScanned = scanner.scan(rootPath: path, customPaths: customPaths)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.scanGeneration == generation else { return }
@@ -301,6 +304,16 @@ public final class WorkspaceViewModel: ObservableObject {
         saveWorkbenchLayout()
     }
 
+    public func selectTicket(_ ticket: TicketInfo) {
+        self.selectedTicket = ticket
+        selectCenterTab(.ticket)
+    }
+
+    public func selectAgent(_ agent: AgentInfo) {
+        self.selectedAgent = agent
+        selectCenterTab(.agent)
+    }
+
     public func resetWorkbenchLayout() {
         workbenchLayout = WorkbenchLayoutState()
         saveWorkbenchLayout()
@@ -308,7 +321,7 @@ public final class WorkspaceViewModel: ObservableObject {
 
     public func refreshCurrentRepoStatus() {
         guard let repo = selectedRepo else { return }
-        DispatchQueue.global(qos: .userInitiated).async { [gitService] in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, gitService] in
             let (branch, isDirty, ahead, behind, changes) = gitService.getRepoStatus(repoPath: repo.path)
             let updated = RepoInfo(name: repo.name, path: repo.path, groupName: repo.groupName,
                                    branch: branch, isDirty: isDirty, ahead: ahead, behind: behind, changedFiles: changes)
@@ -328,6 +341,7 @@ public final class WorkspaceViewModel: ObservableObject {
                 if let idx = self.repositories.firstIndex(where: { $0.path == repo.path }) {
                     self.repositories[idx] = updated
                 }
+                self.statusRevision += 1
             }
         }
     }
@@ -386,7 +400,7 @@ public final class WorkspaceViewModel: ObservableObject {
 
     public func refreshAgents() {
         let repos = repositories
-        DispatchQueue.global(qos: .utility).async { [agentScanner] in
+        DispatchQueue.global(qos: .utility).async { [weak self, agentScanner] in
             let agents = agentScanner.scanAgents(repositories: repos)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -697,6 +711,7 @@ public final class WorkspaceViewModel: ObservableObject {
                         self.refreshCurrentRepoStatus()
                     }
                 }
+                self.statusRevision += 1
                 completion(result)
             }
         }
@@ -731,6 +746,7 @@ public final class WorkspaceViewModel: ObservableObject {
                         self.refreshCurrentRepoStatus()
                     }
                 }
+                self.statusRevision += 1
                 completion(result)
             }
         }
