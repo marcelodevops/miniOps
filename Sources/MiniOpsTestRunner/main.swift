@@ -1361,6 +1361,7 @@ do {
     assertEqual(defaultLayout.activeCenterTab, CenterTab.editor, "Default center tab is editor")
     assertEqual(defaultLayout.activeLeftTab, LeftDockTab.repos, "Default left tab is repos")
     assertEqual(defaultLayout.activeRightTab, RightDockTab.changes, "Default right tab is changes")
+    assertEqual(defaultLayout.focusedTicketKey, nil, "No Focus ticket is selected by default")
 
     // Enum cases and titles
     assertEqual(CenterTab.allCases.count, 7, "Seven center stage tabs")
@@ -1382,6 +1383,7 @@ do {
     customLayout.activeCenterTab = .focus
     customLayout.activeLeftTab = .tickets
     customLayout.activeRightTab = .agents
+    customLayout.focusedTicketKey = "OPS-42"
     store.saveWorkbenchLayout(customLayout)
 
     let reloadedStore = WorkspaceStateStore(customStorageURL: storeURL)
@@ -1395,6 +1397,7 @@ do {
     assertEqual(reloadedLayout.activeCenterTab, CenterTab.focus, "Persisted center tab matches focus")
     assertEqual(reloadedLayout.activeLeftTab, LeftDockTab.tickets, "Persisted left tab matches tickets")
     assertEqual(reloadedLayout.activeRightTab, RightDockTab.agents, "Persisted right tab matches agents")
+    assertEqual(reloadedLayout.focusedTicketKey, "OPS-42", "Focused ticket persists with workspace layout")
 
     // Backward compatibility with legacy state files missing workbenchLayout key
     let legacyURL = tempDir.appendingPathComponent("legacy.json")
@@ -1402,6 +1405,11 @@ do {
     let legacyStore = WorkspaceStateStore(customStorageURL: legacyURL)
     assertEqual(legacyStore.getWorkbenchLayout().activeCenterTab, CenterTab.editor, "Legacy state file decodes with default workbench layout")
     assertEqual(legacyStore.getWorkbenchLayout().isLeftDockCollapsed, false, "Legacy state file preserves default dock states")
+    assertEqual(legacyStore.getWorkbenchLayout().focusedTicketKey, nil, "Legacy state defaults focused ticket safely")
+
+    let oldLayoutJSON = #"{"activeCenterTab":"Focus","activeLeftTab":"Tickets","activeRightTab":"Agents","isLeftDockCollapsed":false,"isRightDockCollapsed":false,"isBottomDockCollapsed":false,"leftDockWidth":260,"rightDockWidth":300,"bottomDockHeightRatio":0.35}"#
+    let oldLayout = try! JSONDecoder().decode(WorkbenchLayoutState.self, from: Data(oldLayoutJSON.utf8))
+    assertEqual(oldLayout.focusedTicketKey, nil, "Existing workbench layouts decode without the new Focus field")
 }
 
 // Regression checks for the panel-shell review.
@@ -1962,6 +1970,105 @@ do {
 
     assertEqual(result.status, 0, "The probe subprocess should exit successfully")
     assert(!mainRunLoopReentered, "Waiting for a subprocess must not pump the main run loop during a SwiftUI transaction")
+}
+
+// Test 33: Milestone 4 Focus Persistence, Context Association, and Overview Filters
+print("Test 33: Milestone 4 Focus Persistence, Context Association, and Overview Filters")
+do {
+    let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let repoAURL = tempRoot.appendingPathComponent("repo-a")
+    let repoBURL = tempRoot.appendingPathComponent("repo-b")
+    let ticketDirectory = repoAURL.appendingPathComponent("tickets")
+    let repoBTicketDirectory = repoBURL.appendingPathComponent("tickets")
+    try! FileManager.default.createDirectory(at: ticketDirectory, withIntermediateDirectories: true)
+    try! FileManager.default.createDirectory(at: repoBTicketDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+    let localTicketPath = ticketDirectory.appendingPathComponent("OPS-42.md").path
+    try! "# Local ticket".write(toFile: localTicketPath, atomically: true, encoding: .utf8)
+    try! "# Second local ticket".write(
+        to: repoBTicketDirectory.appendingPathComponent("OPS-99.md"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    let repoA = RepoInfo(name: "repo-a", path: repoAURL.path, branch: "main", isDirty: true)
+    let repoB = RepoInfo(name: "repo-b", path: repoBURL.path, branch: "feat/OPS-77-api")
+    let localTicket = TicketInfo(key: "OPS-42", summary: "Local ticket", localPath: localTicketPath)
+    let branchTicket = TicketInfo(key: "OPS-77", summary: "Branch-associated Jira ticket")
+    let cachedTicket = TicketInfo(
+        key: "OPS-88",
+        summary: "Workspace cache must not imply repository ownership",
+        localPath: repoAURL.appendingPathComponent("jira-cache.json").path
+    )
+
+    assertEqual(
+        TicketScanner.shared.associatedRepository(for: localTicket, repositories: [repoA, repoB])?.path,
+        repoA.path,
+        "A local ticket file resolves to its containing repository"
+    )
+    assertEqual(
+        TicketScanner.shared.associatedRepository(for: branchTicket, repositories: [repoA, repoB])?.path,
+        repoB.path,
+        "A Jira ticket resolves to a repository branch containing its key"
+    )
+    assertEqual(
+        TicketScanner.shared.associatedRepository(for: cachedTicket, repositories: [repoA, repoB])?.path,
+        nil,
+        "A shared Jira cache path does not falsely associate every cached ticket with its containing repository"
+    )
+    let prefixTicket = TicketInfo(key: "OPS-7", summary: "Must not match OPS-77")
+    assertEqual(
+        TicketScanner.shared.associatedRepository(for: prefixTicket, repositories: [repoA, repoB])?.path,
+        nil,
+        "Ticket key matching observes numeric boundaries"
+    )
+    let workspaceTickets = TicketScanner.shared.scanTickets(
+        workspacePath: tempRoot.path,
+        repoPaths: [repoA.path, repoB.path]
+    )
+    assert(workspaceTickets.contains(where: { $0.key == "OPS-42" }), "Workspace scan includes tickets from repo A")
+    assert(workspaceTickets.contains(where: { $0.key == "OPS-99" }), "Workspace scan includes tickets from repo B")
+
+    let storeURL = tempRoot.appendingPathComponent("state.json")
+    let store = WorkspaceStateStore(customStorageURL: storeURL)
+    store.saveWorkspacePath(tempRoot.path)
+    MainActor.assumeIsolated {
+        let viewModel = WorkspaceViewModel(stateStore: store)
+        viewModel.repositories = [repoA, repoB]
+        viewModel.tickets = [localTicket, branchTicket]
+        viewModel.activeAgents = [
+            AgentInfo(
+                pid: 4242,
+                tool: "FocusAgent",
+                status: "running",
+                isWaitingForInput: false,
+                elapsed: "1m",
+                repoPath: repoB.path
+            )
+        ]
+
+        viewModel.selectFocusTicket(branchTicket)
+        assertEqual(viewModel.focusedTicket()?.key, "OPS-77", "Focus uses the persisted ticket key")
+        assertEqual(viewModel.repository(for: branchTicket)?.path, repoB.path, "Focus uses ticket-associated repository context")
+        assertEqual(viewModel.agents(for: branchTicket).map(\.pid), [4242], "Focus limits agents to the associated repository")
+        assertEqual(viewModel.workbenchLayout.activeCenterTab, .focus, "Selecting Focus ticket opens the Focus center tab")
+        assertEqual(
+            store.getWorkbenchLayout(workspacePath: tempRoot.path).focusedTicketKey,
+            "OPS-77",
+            "Focus selection is persisted per workspace"
+        )
+
+        viewModel.showRepositories(filter: .dirty)
+        assertEqual(viewModel.repositoryPanelFilter, .dirty, "Overview can request dirty repositories")
+        assertEqual(viewModel.workbenchLayout.activeLeftTab, .repos, "Repository summary opens the Repositories panel")
+        viewModel.showTickets(filter: .open)
+        assertEqual(viewModel.ticketPanelFilter, .open, "Overview can request open tickets")
+        assertEqual(viewModel.workbenchLayout.activeLeftTab, .tickets, "Ticket summary opens the Tickets panel")
+        viewModel.showAgents(filter: .waiting)
+        assertEqual(viewModel.agentPanelFilter, .waiting, "Overview can request waiting agents")
+        assertEqual(viewModel.workbenchLayout.activeRightTab, .agents, "Agent summary opens the Agents panel")
+    }
 }
 
 print("==================================================")

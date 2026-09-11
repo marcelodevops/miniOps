@@ -6,14 +6,20 @@ public final class TicketScanner: @unchecked Sendable {
     public init() {}
 
     public func scanTickets(workspacePath: String, repoPath: String? = nil) -> [TicketInfo] {
+        scanTickets(workspacePath: workspacePath, repoPaths: repoPath.map { [$0] } ?? [])
+    }
+
+    public func scanTickets(workspacePath: String, repoPaths: [String]) -> [TicketInfo] {
         var tickets: [TicketInfo] = []
         var seenKeys: Set<String> = []
 
         // 1. Check jira-cache.json in workspace or repo
-        let possibleCachePaths = [
-            URL(fileURLWithPath: (workspacePath as NSString).expandingTildeInPath).appendingPathComponent("jira-cache.json"),
-            repoPath.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath).appendingPathComponent("jira-cache.json") }
-        ].compactMap { $0 }
+        let workspaceURL = URL(fileURLWithPath: (workspacePath as NSString).expandingTildeInPath)
+        let possibleCachePaths = [workspaceURL.appendingPathComponent("jira-cache.json")]
+            + repoPaths.map {
+                URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
+                    .appendingPathComponent("jira-cache.json")
+            }
 
         for cacheURL in possibleCachePaths {
             if let data = try? Data(contentsOf: cacheURL),
@@ -42,12 +48,11 @@ public final class TicketScanner: @unchecked Sendable {
         }
 
         // 2. Check tickets/ directory in workspace or repo
-        var searchDirs: [URL] = [
-            URL(fileURLWithPath: (workspacePath as NSString).expandingTildeInPath).appendingPathComponent("tickets")
-        ]
-        if let rp = repoPath {
-            searchDirs.append(URL(fileURLWithPath: (rp as NSString).expandingTildeInPath).appendingPathComponent("tickets"))
-            searchDirs.append(URL(fileURLWithPath: (rp as NSString).expandingTildeInPath).appendingPathComponent(".tickets"))
+        var searchDirs = [workspaceURL.appendingPathComponent("tickets")]
+        for repoPath in repoPaths {
+            let repoURL = URL(fileURLWithPath: (repoPath as NSString).expandingTildeInPath)
+            searchDirs.append(repoURL.appendingPathComponent("tickets"))
+            searchDirs.append(repoURL.appendingPathComponent(".tickets"))
         }
 
         for dir in searchDirs {
@@ -136,5 +141,36 @@ public final class TicketScanner: @unchecked Sendable {
         guard filePath.hasPrefix(prefix) else { return nil }
         let relative = String(filePath.dropFirst(prefix.count))
         return relative.isEmpty ? nil : relative
+    }
+
+    /// Resolves a ticket to repository context without guessing from the currently
+    /// selected repository. A local ticket file is authoritative; otherwise a
+    /// branch containing the ticket key provides a useful Jira-to-repo association.
+    public func associatedRepository(for ticket: TicketInfo, repositories: [RepoInfo]) -> RepoInfo? {
+        if let localPath = ticket.localPath, localPath.lowercased().hasSuffix(".md") {
+            let matching = repositories.filter {
+                repoRelativePath(forTicketPath: localPath, repoPath: $0.path) != nil
+            }
+            if let deepest = matching.max(by: { $0.path.count < $1.path.count }) {
+                return deepest
+            }
+        }
+
+        if let branchMatch = repositories.first(where: { containsTicketKey(ticket.key, in: $0.branch) }) {
+            return branchMatch
+        }
+        return repositories.first {
+            let directoryName = URL(fileURLWithPath: $0.path).lastPathComponent
+            return containsTicketKey(ticket.key, in: $0.name)
+                || containsTicketKey(ticket.key, in: directoryName)
+        }
+    }
+
+    private func containsTicketKey(_ key: String, in text: String) -> Bool {
+        let escapedKey = NSRegularExpression.escapedPattern(for: key)
+        let pattern = "(?i)(?<![A-Z0-9])\(escapedKey)(?![0-9])"
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return false }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return expression.firstMatch(in: text, range: range) != nil
     }
 }

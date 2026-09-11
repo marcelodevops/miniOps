@@ -136,6 +136,21 @@ public enum WorkbenchPanel: String, Codable, CaseIterable, Sendable {
     case notes = "Notes"
 }
 
+public enum RepositoryPanelFilter: String, Codable, Sendable {
+    case all
+    case dirty
+}
+
+public enum TicketPanelFilter: String, Codable, Sendable {
+    case all
+    case open
+}
+
+public enum AgentPanelFilter: String, Codable, Sendable {
+    case all
+    case waiting
+}
+
 public typealias LeftDockTab = WorkbenchPanel
 public typealias RightDockTab = WorkbenchPanel
 public enum SideDock: String, Codable, Sendable { case left, right }
@@ -151,6 +166,7 @@ public struct WorkbenchLayoutState: Codable, Hashable, Sendable {
     public var leftDockWidth: Double
     public var rightDockWidth: Double
     public var bottomDockHeightRatio: Double
+    public var focusedTicketKey: String?
 
     public func panels(in dock: SideDock) -> [WorkbenchPanel] {
         WorkbenchPanel.allCases.filter { panel in
@@ -187,7 +203,8 @@ public struct WorkbenchLayoutState: Codable, Hashable, Sendable {
         isBottomDockCollapsed: Bool = false,
         leftDockWidth: Double = 260,
         rightDockWidth: Double = 300,
-        bottomDockHeightRatio: Double = 0.35
+        bottomDockHeightRatio: Double = 0.35,
+        focusedTicketKey: String? = nil
     ) {
         self.activeCenterTab = activeCenterTab
         self.activeLeftTab = activeLeftTab
@@ -198,6 +215,7 @@ public struct WorkbenchLayoutState: Codable, Hashable, Sendable {
         self.leftDockWidth = leftDockWidth
         self.rightDockWidth = rightDockWidth
         self.bottomDockHeightRatio = bottomDockHeightRatio
+        self.focusedTicketKey = focusedTicketKey
     }
 }
 

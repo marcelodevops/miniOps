@@ -65,6 +65,9 @@ public final class WorkspaceViewModel: ObservableObject {
     private var diffRequestToken: UUID = UUID()
     @Published public var selectedTicket: TicketInfo? = nil
     @Published public var selectedAgent: AgentInfo? = nil
+    @Published public var repositoryPanelFilter: RepositoryPanelFilter = .all
+    @Published public var ticketPanelFilter: TicketPanelFilter = .open
+    @Published public var agentPanelFilter: AgentPanelFilter = .all
     private var scanGeneration = 0
     private var loadedFileContent: String = ""
 
@@ -323,6 +326,47 @@ public final class WorkspaceViewModel: ObservableObject {
         selectCenterTab(.ticket)
     }
 
+    public func selectFocusTicket(_ ticket: TicketInfo) {
+        workbenchLayout.focusedTicketKey = ticket.key
+        selectCenterTab(.focus)
+    }
+
+    public func focusedTicket() -> TicketInfo? {
+        if let key = workbenchLayout.focusedTicketKey {
+            return tickets.first { $0.key == key }
+        }
+        return tickets.first(where: { $0.isOpen }) ?? tickets.first
+    }
+
+    public func repository(for ticket: TicketInfo) -> RepoInfo? {
+        TicketScanner.shared.associatedRepository(for: ticket, repositories: repositories)
+    }
+
+    public func agents(for ticket: TicketInfo) -> [AgentInfo] {
+        guard let repo = repository(for: ticket) else { return [] }
+        return activeAgents.filter {
+            if let repoPath = $0.repoPath {
+                return repoPath == repo.path
+            }
+            return $0.repoName == repo.name
+        }
+    }
+
+    public func showRepositories(filter: RepositoryPanelFilter) {
+        repositoryPanelFilter = filter
+        showPanel(.repos)
+    }
+
+    public func showTickets(filter: TicketPanelFilter) {
+        ticketPanelFilter = filter
+        showPanel(.tickets)
+    }
+
+    public func showAgents(filter: AgentPanelFilter) {
+        agentPanelFilter = filter
+        showPanel(.agents)
+    }
+
     public func selectAgent(_ agent: AgentInfo) {
         self.selectedAgent = agent
         selectCenterTab(.agent)
@@ -378,7 +422,10 @@ public final class WorkspaceViewModel: ObservableObject {
     }
 
     public func refreshTickets() {
-        self.tickets = TicketScanner.shared.scanTickets(workspacePath: workspacePath, repoPath: selectedRepo?.path)
+        self.tickets = TicketScanner.shared.scanTickets(
+            workspacePath: workspacePath,
+            repoPaths: repositories.map(\.path)
+        )
     }
 
     public func syncJiraTickets() {
@@ -523,8 +570,8 @@ public final class WorkspaceViewModel: ObservableObject {
     /// Opens a ticket's local markdown file in the editor, or launches the ticket URL in the browser.
     public func openTicket(_ ticket: TicketInfo) {
         if let localPath = ticket.localPath, localPath.lowercased().hasSuffix(".md") {
-            guard let repo = selectedRepo else {
-                presentAlert(title: "No Repository Selected", message: "Select a repository before opening a ticket file.")
+            guard let repo = repository(for: ticket) else {
+                presentAlert(title: "Repository Not Found", message: "No repository is associated with \(ticket.key).")
                 return
             }
             guard let relativePath = TicketScanner.shared.repoRelativePath(forTicketPath: localPath, repoPath: repo.path) else {
@@ -533,6 +580,10 @@ public final class WorkspaceViewModel: ObservableObject {
                     message: "\(ticket.key) is stored outside \(repo.name) and cannot be opened here."
                 )
                 return
+            }
+            if selectedRepo?.path != repo.path {
+                selectRepo(repo)
+                guard selectedRepo?.path == repo.path else { return }
             }
             selectFile(relativePath)
             return
@@ -549,9 +600,13 @@ public final class WorkspaceViewModel: ObservableObject {
         presentAlert(title: "No Local File", message: "\(ticket.key) has no local markdown file to open.")
     }
 
-    public func createBranchForTicket(_ ticket: TicketInfo) {
-        guard let repo = selectedRepo else {
-            presentAlert(title: "No Repository Selected", message: "Select a repository before creating a feature branch.")
+    public func createBranchForTicket(
+        _ ticket: TicketInfo,
+        repository targetRepository: RepoInfo? = nil,
+        completion: ((GitOperationResult) -> Void)? = nil
+    ) {
+        guard let repo = targetRepository ?? repository(for: ticket) ?? selectedRepo else {
+            presentAlert(title: "Repository Not Found", message: "Select or associate a repository before creating a feature branch.")
             return
         }
 
@@ -562,13 +617,14 @@ public final class WorkspaceViewModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if result.success {
-                    self.refreshCurrentRepoStatus()
+                    self.refreshRepositories()
                 } else {
                     self.presentAlert(
                         title: "Could Not Create Branch",
                         message: result.error ?? "Failed to create \(branchName)."
                     )
                 }
+                completion?(result)
             }
         }
     }
