@@ -33,6 +33,10 @@ public enum ProcessRunner {
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
+        let terminationSemaphore = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in
+            terminationSemaphore.signal()
+        }
 
         do {
             try process.run()
@@ -56,22 +60,16 @@ public enum ProcessRunner {
             outputGroup.leave()
         }
 
-        let deadline = Date().addingTimeInterval(max(0, timeout))
-        var timedOut = false
-        while process.isRunning {
-            if Date() >= deadline {
-                timedOut = true
-                process.terminate()
-                Thread.sleep(forTimeInterval: 0.1)
-                if process.isRunning {
-                    kill(process.processIdentifier, SIGKILL)
-                }
-                break
+        let waitResult = terminationSemaphore.wait(timeout: .now() + max(0, timeout))
+        let timedOut = waitResult == .timedOut
+        if timedOut {
+            process.terminate()
+            if terminationSemaphore.wait(timeout: .now() + 0.1) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                terminationSemaphore.wait()
             }
-            Thread.sleep(forTimeInterval: 0.05)
         }
 
-        process.waitUntilExit()
         outputGroup.wait()
 
         let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
