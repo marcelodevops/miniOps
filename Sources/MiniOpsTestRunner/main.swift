@@ -1809,27 +1809,71 @@ do {
         assertEqual(viewModel.activeDiffFile, "fileA1.txt", "Center stage targets fileA1.txt diff")
         assertEqual(viewModel.workbenchLayout.activeCenterTab, .diff, "Center tab switches to .diff")
 
-        let initialRev = viewModel.statusRevision
-
-        // Step 2: Externally edit fileA1.txt (same file, same modified status, new content)
-        try! "version 1\nversion 2\nversion 3\n".write(to: fileA1, atomically: true, encoding: .utf8)
-        viewModel.refreshCurrentRepoStatus()
-
-        // Wait for status refresh to increment statusRevision
+        // Wait for initial rendered diff to load
         retries = 0
-        while viewModel.statusRevision == initialRev && retries < 30 {
+        while viewModel.activeDiffContent.isEmpty && retries < 30 {
             RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
             retries += 1
         }
-        assert(viewModel.statusRevision > initialRev, "Status refresh increments statusRevision after external edit")
+        assert(viewModel.activeDiffContent.contains("+version 2"), "Initial rendered diff displays version 2 additions")
 
-        let freshDiff = GitService.shared.getDiff(repoPath: repoDirA.path, filePath: "fileA1.txt")
-        assert(freshDiff.contains("+version 3"), "Diff recomputed reflects the external modification")
-        assertEqual(viewModel.selectedFilesForCommit, ["fileA1.txt"], "Commit selection survives status refresh")
+        // Step 2: UI check for same-file external edits through BOTH refresh routes
+        // Route 1: refreshCurrentRepoStatus()
+        try! "version 1\nversion 2\nversion 3\n".write(to: fileA1, atomically: true, encoding: .utf8)
+        viewModel.refreshCurrentRepoStatus()
 
-        // Step 3: Switch to Repo B
+        retries = 0
+        while !viewModel.activeDiffContent.contains("+version 3") && retries < 30 {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            retries += 1
+        }
+        assert(viewModel.activeDiffContent.contains("+version 3"), "UI check: rendered diff updates to +version 3 via refreshCurrentRepoStatus route")
+        assertEqual(viewModel.selectedFilesForCommit, ["fileA1.txt"], "Commit selection survives Route 1 status refresh")
+
+        // Route 2: refreshRepositories() (sidebar workspace rescan)
+        try! "version 1\nversion 2\nversion 3\nversion 4\n".write(to: fileA1, atomically: true, encoding: .utf8)
+        viewModel.refreshRepositories()
+
+        retries = 0
+        while !viewModel.activeDiffContent.contains("+version 4") && retries < 40 {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            retries += 1
+        }
+        assert(viewModel.activeDiffContent.contains("+version 4"), "UI check: rendered diff updates to +version 4 via refreshRepositories sidebar rescan route")
+        assertEqual(viewModel.selectedFilesForCommit, ["fileA1.txt"], "Commit selection survives Route 2 workspace rescan")
+
+        // Step 3 & 4: Deliberately block Repo A's commit in-flight, switch to B while running, release it, verify both repositories
+        assertEqual(viewModel.selectedRepo?.path, repoDirA.path, "Repo A is active before starting commit")
+        assertEqual(viewModel.selectedFilesForCommit, ["fileA1.txt"], "Repo A has fileA1.txt selected for commit")
+
+        let commitStarted = DispatchSemaphore(value: 0)
+        let commitGate = DispatchSemaphore(value: 0)
+        GitService.shared.preCommitHook = { path in
+            if path == repoDirA.path {
+                commitStarted.signal() // Signal that Repo A commit is actively in-flight under repo lock
+                commitGate.wait()      // Deliberately block Repo A commit until released
+            }
+        }
+
+        var commitFinished = false
+        var commitSuccess = false
+        viewModel.executeSelectiveCommit(
+            repoPath: repoDirA.path,
+            message: "Deliberately blocked in-flight commit in A",
+            selectedPaths: ["fileA1.txt"]
+        ) { result in
+            commitFinished = true
+            commitSuccess = result.success
+        }
+
+        // Wait until Repo A's commit has actively started and entered the gate
+        let startedRes = commitStarted.wait(timeout: .now() + 5)
+        assert(startedRes == .success, "Repo A commit started and is blocked in-flight")
+        assert(!commitFinished, "Repo A commit is actively in-flight and not yet completed")
+
+        // WHILE Repo A commit is running and blocked, switch to Repo B!
         viewModel.selectRepo(repoBInfo)
-        assertEqual(viewModel.selectedRepo?.path, repoDirB.path, "Switched to Repo B")
+        assertEqual(viewModel.selectedRepo?.path, repoDirB.path, "Switched to Repo B while Repo A commit is in-flight")
 
         // Wait for repo B status refresh
         retries = 0
@@ -1838,38 +1882,33 @@ do {
             retries += 1
         }
         viewModel.setCommitSelection(["fileB1.txt"])
-        assertEqual(viewModel.selectedFilesForCommit, ["fileB1.txt"], "Repo B has fileB1.txt selected")
+        assertEqual(viewModel.selectedFilesForCommit, ["fileB1.txt"], "Repo B has fileB1.txt selected while Repo A commit is blocked")
 
-        // Step 4: Trigger Delayed Selective Commit targeting Repo A while Repo B is active
-        var commitFinished = false
-        var commitSuccess = false
-        viewModel.executeSelectiveCommit(
-            repoPath: repoDirA.path,
-            message: "Delayed selective commit in A",
-            selectedPaths: ["fileA1.txt"]
-        ) { result in
-            commitFinished = true
-            commitSuccess = result.success
-        }
+        // RELEASE Repo A's commit to finish in the background
+        commitGate.signal()
 
         retries = 0
         while !commitFinished && retries < 50 {
             RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
             retries += 1
         }
-        assert(commitFinished && commitSuccess, "Delayed commit for Repo A succeeded")
+        assert(commitFinished && commitSuccess, "Repo A in-flight commit succeeded after release")
+        GitService.shared.preCommitHook = nil // Clean up hook
 
-        // Invariants verification after Repo A commit:
+        // Invariants verification after Repo A commit completes while Repo B is active:
         // 1. Repo B is STILL the active repo in viewModel
         assertEqual(viewModel.selectedRepo?.path, repoDirB.path, "Active repo is still Repo B")
-        // 2. Repo B's selection MUST NOT have been cleared by Repo A's commit!
-        assertEqual(viewModel.selectedFilesForCommit, ["fileB1.txt"], "Repo B's active selection is preserved and isolated from Repo A's commit")
+        // 2. Repo B's selection MUST NOT have been cleared or corrupted by Repo A's commit completion!
+        assertEqual(viewModel.selectedFilesForCommit, ["fileB1.txt"], "Repo B's active selection is preserved and isolated from Repo A's commit completion")
+        let statusB = runGit(args: ["status", "--porcelain"], in: repoDirB.path)
+        assert(statusB.contains("fileB1.txt"), "Repo B working tree files were not committed by Repo A")
+
         // 3. Repo A's persisted state in store has its selection cleared
         let persistedStateA = customStore.getRepoState(repoPath: repoDirA.path)
         assertEqual(persistedStateA.selectedFilesForCommit, [], "Repo A persisted selection was cleared upon its commit")
         // 4. In Repo A Git history, fileA1.txt is committed, while fileA2.txt remains uncommitted
         let logA = runGit(args: ["log", "-1", "--pretty=%s"], in: repoDirA.path)
-        assertEqual(logA.trimmingCharacters(in: .whitespacesAndNewlines), "Delayed selective commit in A", "Git HEAD reflects Repo A commit")
+        assertEqual(logA.trimmingCharacters(in: .whitespacesAndNewlines), "Deliberately blocked in-flight commit in A", "Git HEAD reflects Repo A commit")
         let committedFilesInA = runGit(args: ["show", "--pretty=", "--name-only", "HEAD"], in: repoDirA.path)
         assert(committedFilesInA.contains("fileA1.txt"), "fileA1.txt was committed")
         assert(!committedFilesInA.contains("fileA2.txt"), "fileA2.txt was excluded from commit")

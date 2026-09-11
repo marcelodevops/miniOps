@@ -52,7 +52,17 @@ public final class WorkspaceViewModel: ObservableObject {
     @Published public var isShowingCloneSheet: Bool = false
     @Published public var isShowingSettingsSheet: Bool = false
     @Published public var hiddenRepoPaths: Set<String> = []
-    @Published public var statusRevision: Int = 0
+    @Published public var statusRevision: Int = 0 {
+        didSet {
+            if activeDiffFile != nil {
+                loadActiveDiff()
+            }
+        }
+    }
+    @Published public var activeDiffContent: String = ""
+    @Published public var isLoadingDiff: Bool = false
+    @Published public var sideDiffContent: String = ""
+    private var diffRequestToken: UUID = UUID()
     @Published public var selectedTicket: TicketInfo? = nil
     @Published public var selectedAgent: AgentInfo? = nil
     private var scanGeneration = 0
@@ -118,6 +128,7 @@ public final class WorkspaceViewModel: ObservableObject {
                         self.fileTree = nil
                     }
                 }
+                self.statusRevision += 1
                 self.refreshAgents()
                 self.refreshTickets()
                 self.syncJiraTickets()
@@ -200,6 +211,9 @@ public final class WorkspaceViewModel: ObservableObject {
             activeDiffFile = repo.changedFiles.first?.path
         } else if activeDiffFile == nil {
             activeDiffFile = repo.changedFiles.first?.path
+        }
+        if activeDiffFile != nil {
+            loadActiveDiff(force: true)
         }
 
         refreshGraph()
@@ -621,6 +635,28 @@ public final class WorkspaceViewModel: ObservableObject {
     public func inspectDiff(filePath: String) {
         self.activeDiffFile = filePath
         selectCenterTab(.diff)
+        loadActiveDiff(force: true)
+    }
+
+    public func loadActiveDiff(force: Bool = false) {
+        guard let repo = selectedRepo, let filePath = activeDiffFile else {
+            activeDiffContent = ""
+            isLoadingDiff = false
+            return
+        }
+        let token = UUID()
+        self.diffRequestToken = token
+        self.isLoadingDiff = true
+        let targetRepo = repo.path
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, gitService] in
+            let diff = gitService.getDiff(repoPath: targetRepo, filePath: filePath)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.diffRequestToken == token else { return }
+                guard self.selectedRepo?.path == targetRepo else { return }
+                self.activeDiffContent = diff
+                self.isLoadingDiff = false
+            }
+        }
     }
 
     // MARK: - Secondary Actions

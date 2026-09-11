@@ -88,17 +88,20 @@ The first version needs predictable left/right/bottom docks, not a general-purpo
 
 **Gate:** browse a repository → inspect changes → edit/save → use terminal → selectively commit → return to browse. Tickets, Agents, editor, and terminal coexist; Git details do not replace the workbench. Switching between two repositories restores the correct state. Excluded staged changes remain excluded.
 
-**Status:** Implementation completed and verified against all review blockers (2026-09-11):
+**Status:** Implemented; final refresh and in-flight transition validation pending (2026-09-11):
 1. Diff loading decoupled from SwiftUI rendering (`CenterDiffStageView`, `GitChangesView` async with cancellation token).
 2. Side-panel commit and reconcile operations fully isolated by captured repository path; snapshots captured on main thread, routed through repository-scoped ViewModel handlers (`onExecuteCommit` / `onExecuteReconcile`), with background completions guarded against active repository switches to prevent cross-repo selection clearing.
-3. Center diff invalidation on external file edits via reactive `statusRevision` in `WorkspaceViewModel`; `CenterDiffStageView` forces diff reloads when repository status refreshes even if file path and status string are unchanged.
-4. Side-panel diff state cleanly reset on repository switch with UUID request cancellation tokens, preventing stale diffs from leaking across repositories.
-5. Center-stage Ticket and Agent detail tabs (`TicketDetailStageView`, `AgentDetailStageView`) integrated into `CenterTab` enum and wired to Navigator and Inspector selection.
-6. "Open in Editor" normalizes to validated absolute paths, preventing file loss upon repo switch/relaunch.
-7. Diff fallback strictly handles unborn repositories; empty HEAD comparison is accepted without displaying misleading index-to-working-tree reversal.
-8. `ExternalEditor` async dispatch avoids thread blocking and eliminates duplicate editor launch race.
-9. Commit selection changes persist immediately on toggle across app relaunch.
-10. Validated via end-to-end Test 31 covering two live repositories, delayed background commits during repository switching, external edits with diff invalidation, and ticket/agent center tab transitions (1,340 test checks passing).
+3. Reactive `statusRevision` published after every successful relevant refresh—including both `refreshCurrentRepoStatus()` and workspace rescan `refreshRepositories()`.
+4. Both diff views (`CenterDiffStageView` and `GitChangesView`) observe `statusRevision` so external edits to already-modified files without status code change reload rendered diffs immediately in both views.
+5. Side-panel diff state cleanly reset on repository switch with UUID request cancellation tokens, preventing stale diffs from leaking across repositories.
+6. Center-stage Ticket and Agent detail tabs (`TicketDetailStageView`, `AgentDetailStageView`) integrated into `CenterTab` enum and wired to Navigator and Inspector selection.
+7. "Open in Editor" normalizes to validated absolute paths, preventing file loss upon repo switch/relaunch.
+8. Diff fallback strictly handles unborn repositories; empty HEAD comparison is accepted without displaying misleading index-to-working-tree reversal.
+9. `ExternalEditor` async dispatch avoids thread blocking and eliminates duplicate editor launch race.
+10. Commit selection changes persist immediately on toggle across app relaunch.
+11. End-to-end Test 31 verified:
+    - UI check verifying rendered diff updates (`activeDiffContent`) after same-file external edits through both refresh routes (`refreshCurrentRepoStatus` and `refreshRepositories`).
+    - Deliberately blocked Repo A's commit in-flight via concurrency gate, switched to Repo B while A's commit was running, released it, and verified isolation in both repositories (1,347 checks passing).
 
 This is the first useful native parity release; complete it before spreading effort across all dashboard pages.
 

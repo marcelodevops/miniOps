@@ -5,6 +5,7 @@ import MiniOpsCore
 public struct GitChangesView: View {
     public let repoPath: String
     public let changes: [GitFileChange]
+    public let statusRevision: Int
     @Binding public var selectedFilesForCommit: Set<String>
     @State private var currentlyViewingDiffFile: String?
     @State private var diffContent: String = ""
@@ -27,10 +28,12 @@ public struct GitChangesView: View {
     public var onExecuteCommit: ((_ repoPath: String, _ message: String, _ selectedPaths: [String], _ completion: @escaping (GitOperationResult) -> Void) -> Void)?
     public var onExecuteReconcile: ((_ repoPath: String, _ message: String, _ selectedPaths: [String], _ completion: @escaping (GitOperationResult) -> Void) -> Void)?
     public var currentRepoPath: (() -> String?)?
+    public var onDiffLoaded: ((_ filePath: String, _ content: String) -> Void)?
 
     public init(
         repoPath: String,
         changes: [GitFileChange],
+        statusRevision: Int = 0,
         selectedFilesForCommit: Binding<Set<String>>,
         onGitOperationDone: @escaping () -> Void,
         onOpenStashes: (() -> Void)? = nil,
@@ -39,10 +42,12 @@ public struct GitChangesView: View {
         onInspectDiffInCenter: ((String) -> Void)? = nil,
         onExecuteCommit: ((_ repoPath: String, _ message: String, _ selectedPaths: [String], _ completion: @escaping (GitOperationResult) -> Void) -> Void)? = nil,
         onExecuteReconcile: ((_ repoPath: String, _ message: String, _ selectedPaths: [String], _ completion: @escaping (GitOperationResult) -> Void) -> Void)? = nil,
-        currentRepoPath: (() -> String?)? = nil
+        currentRepoPath: (() -> String?)? = nil,
+        onDiffLoaded: ((_ filePath: String, _ content: String) -> Void)? = nil
     ) {
         self.repoPath = repoPath
         self.changes = changes
+        self.statusRevision = statusRevision
         self._selectedFilesForCommit = selectedFilesForCommit
         self.onGitOperationDone = onGitOperationDone
         self.onOpenStashes = onOpenStashes
@@ -52,6 +57,7 @@ public struct GitChangesView: View {
         self.onExecuteCommit = onExecuteCommit
         self.onExecuteReconcile = onExecuteReconcile
         self.currentRepoPath = currentRepoPath
+        self.onDiffLoaded = onDiffLoaded
     }
 
     public var body: some View {
@@ -93,6 +99,13 @@ public struct GitChangesView: View {
             diffContent = ""
             operationMessage = nil
             isErrorMessage = false
+        }
+        .onChange(of: statusRevision) { _, _ in
+            if let file = currentlyViewingDiffFile {
+                loadDiff(for: file)
+            } else if let first = changes.first {
+                loadDiff(for: first.path)
+            }
         }
         .onChange(of: changes) { _, newChanges in
             if let file = currentlyViewingDiffFile {
@@ -398,6 +411,7 @@ public struct GitChangesView: View {
                 guard self.diffRequestToken == token else { return }
                 guard (self.currentRepoPath?() ?? self.repoPath) == targetRepo else { return }
                 self.diffContent = diff
+                self.onDiffLoaded?(path, diff)
             }
         }
     }

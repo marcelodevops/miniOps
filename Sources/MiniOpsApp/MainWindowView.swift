@@ -439,6 +439,7 @@ public struct MainWindowView: View {
                     GitChangesView(
                         repoPath: repo.path,
                         changes: repo.changedFiles,
+                        statusRevision: viewModel.statusRevision,
                         selectedFilesForCommit: $viewModel.selectedFilesForCommit,
                         onGitOperationDone: {
                             viewModel.refreshCurrentRepoStatus()
@@ -463,6 +464,9 @@ public struct MainWindowView: View {
                         },
                         currentRepoPath: {
                             viewModel.selectedRepo?.path
+                        },
+                        onDiffLoaded: { _, diff in
+                            viewModel.sideDiffContent = diff
                         }
                     )
                     .id(repo.path)

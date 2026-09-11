@@ -4,6 +4,9 @@ public final class GitService: @unchecked Sendable {
     public static let shared = GitService()
 
     private let lockManager: RepoLockManager
+    /// Optional hook invoked on the background worker thread right after acquiring the repo lock in `selectiveCommit`.
+    /// Enables testing in-flight repository transitions and concurrent UI switches while a commit is actively running.
+    public var preCommitHook: ((_ repoPath: String) -> Void)? = nil
 
     public init(lockManager: RepoLockManager = .shared) {
         self.lockManager = lockManager
@@ -173,6 +176,7 @@ public final class GitService: @unchecked Sendable {
 
         do {
             return try lockManager.withRepoLock(repoPath: repoPath, action: "commit") {
+                preCommitHook?(repoPath)
                 let paths: [String]
                 do {
                     paths = try validatePaths(repoPath: repoPath, paths: selectedPaths)

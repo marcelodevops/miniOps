@@ -316,6 +316,7 @@ public struct CenterDiffStageView: View {
             DispatchQueue.main.async {
                 guard self.diffRequestToken == token else { return } // Discard outdated response
                 self.diffContent = diff
+                self.viewModel.activeDiffContent = diff
                 self.loadedDiffFile = filePath
                 self.loadedRepoPath = repoPath
                 self.loadedRevision = revision
