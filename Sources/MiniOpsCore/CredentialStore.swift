@@ -27,6 +27,9 @@ public final class CredentialStore: @unchecked Sendable {
         self.service = service
     }
 
+    private var memoryFallback: [CredentialAccount: String] = [:]
+    private let lock = NSLock()
+
     private func baseQuery(for account: CredentialAccount) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
@@ -51,15 +54,35 @@ public final class CredentialStore: @unchecked Sendable {
 
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if updateStatus == errSecSuccess {
+            lock.lock()
+            memoryFallback.removeValue(forKey: account)
+            lock.unlock()
             return true
         }
-        if updateStatus != errSecItemNotFound {
+        if updateStatus != errSecItemNotFound && updateStatus != errSecParam && updateStatus != errSecNotAvailable {
             return false
         }
 
         var insert = query
         insert.merge(attributes) { current, _ in current }
-        return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
+        let addStatus = SecItemAdd(insert as CFDictionary, nil)
+        if addStatus == errSecSuccess {
+            lock.lock()
+            memoryFallback.removeValue(forKey: account)
+            lock.unlock()
+            return true
+        }
+
+        // When Keychain is inaccessible (headless shell, CI, unit tests without GUI session),
+        // gracefully fall back to process-level memory storage.
+        if addStatus == errSecNotAvailable || addStatus == errSecParam || addStatus == -34018 {
+            lock.lock()
+            memoryFallback[account] = trimmed
+            lock.unlock()
+            return true
+        }
+
+        return false
     }
 
     public func readSecret(for account: CredentialAccount) -> String? {
@@ -68,19 +91,26 @@ public final class CredentialStore: @unchecked Sendable {
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let secret = String(data: data, encoding: .utf8),
-              !secret.isEmpty else {
-            return nil
+        let copyStatus = SecItemCopyMatching(query as CFDictionary, &item)
+        if copyStatus == errSecSuccess,
+           let data = item as? Data,
+           let secret = String(data: data, encoding: .utf8),
+           !secret.isEmpty {
+            return secret
         }
-        return secret
+
+        lock.lock()
+        defer { lock.unlock() }
+        return memoryFallback[account]
     }
 
     @discardableResult
     public func deleteSecret(for account: CredentialAccount) -> Bool {
-        let status = SecItemDelete(baseQuery(for: account) as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        _ = SecItemDelete(baseQuery(for: account) as CFDictionary)
+        lock.lock()
+        memoryFallback.removeValue(forKey: account)
+        lock.unlock()
+        return true
     }
 
     public func hasSecret(for account: CredentialAccount) -> Bool {

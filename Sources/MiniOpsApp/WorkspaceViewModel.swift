@@ -28,6 +28,7 @@ public final class WorkspaceViewModel: ObservableObject {
     @Published public var isSyncingTickets: Bool = false
     @Published public var ticketSyncStatus: String? = nil
     @Published public var graphData: GraphifyData? = nil
+    @Published public var workbenchLayout: WorkbenchLayoutState = WorkbenchLayoutState()
     private var previouslyNotifiedWaitingPIDs: Set<Int> = []
     private let agentScanner = AgentScanner.shared
 
@@ -46,6 +47,7 @@ public final class WorkspaceViewModel: ObservableObject {
     public init() {
         let appState = stateStore.getAppState()
         self.hiddenRepoPaths = stateStore.getHiddenRepoPaths()
+        self.workbenchLayout = stateStore.getWorkbenchLayout()
         let initialWorkspace = appState.lastWorkspacePath ?? "~/repos"
         setWorkspace(path: initialWorkspace)
 
@@ -212,6 +214,37 @@ public final class WorkspaceViewModel: ObservableObject {
         state.isTerminalCollapsed = isTerminalCollapsed
         state.isGitInspectorOpen = isGitInspectorOpen
         stateStore.saveRepoState(repoPath: repo.path, state: state)
+    }
+
+    public func saveWorkbenchLayout() {
+        stateStore.saveWorkbenchLayout(workbenchLayout)
+    }
+
+    public func toggleLeftDock() {
+        workbenchLayout.isLeftDockCollapsed.toggle()
+        saveWorkbenchLayout()
+    }
+
+    public func toggleRightDock() {
+        workbenchLayout.isRightDockCollapsed.toggle()
+        isGitInspectorOpen = !workbenchLayout.isRightDockCollapsed
+        saveWorkbenchLayout()
+    }
+
+    public func toggleBottomDock() {
+        workbenchLayout.isBottomDockCollapsed.toggle()
+        isTerminalCollapsed = workbenchLayout.isBottomDockCollapsed
+        saveWorkbenchLayout()
+    }
+
+    public func selectCenterTab(_ tab: CenterTab) {
+        workbenchLayout.activeCenterTab = tab
+        saveWorkbenchLayout()
+    }
+
+    public func resetWorkbenchLayout() {
+        workbenchLayout = WorkbenchLayoutState()
+        saveWorkbenchLayout()
     }
 
     public func refreshCurrentRepoStatus() {

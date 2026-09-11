@@ -1319,6 +1319,66 @@ do {
     assertEqual(Int(dragged.leadingWidth.rounded()), 500, "Divider lands where it was dragged")
 }
 
+// Test 28: Workbench Layout State and Dock Persistence
+print("Test 28: Workbench Layout State and Dock Persistence")
+do {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let defaultLayout = WorkbenchLayoutState()
+    assertEqual(defaultLayout.leftDockWidth, 260, "Default left dock width is 260")
+    assertEqual(defaultLayout.rightDockWidth, 300, "Default right dock width is 300")
+    assertEqual(defaultLayout.bottomDockHeightRatio, 0.35, "Default bottom dock ratio is 0.35")
+    assertEqual(defaultLayout.isLeftDockCollapsed, false, "Left dock uncollapsed by default")
+    assertEqual(defaultLayout.isRightDockCollapsed, false, "Right dock uncollapsed by default")
+    assertEqual(defaultLayout.isBottomDockCollapsed, false, "Bottom dock uncollapsed by default")
+    assertEqual(defaultLayout.activeCenterTab, CenterTab.editor, "Default center tab is editor")
+    assertEqual(defaultLayout.activeLeftTab, LeftDockTab.repos, "Default left tab is repos")
+    assertEqual(defaultLayout.activeRightTab, RightDockTab.changes, "Default right tab is changes")
+
+    // Enum cases and titles
+    assertEqual(CenterTab.allCases.count, 4, "Four center stage tabs")
+    assertEqual(LeftDockTab.allCases.count, 2, "Two left dock tabs")
+    assertEqual(RightDockTab.allCases.count, 5, "Five right dock tabs")
+
+    // Persistence through WorkspaceStateStore
+    let storeURL = tempDir.appendingPathComponent("state.json")
+    let store = WorkspaceStateStore(customStorageURL: storeURL)
+    assertEqual(store.getWorkbenchLayout().activeCenterTab, CenterTab.editor, "Store provides default workbench layout")
+
+    var customLayout = defaultLayout
+    customLayout.leftDockWidth = 320
+    customLayout.rightDockWidth = 380
+    customLayout.bottomDockHeightRatio = 0.45
+    customLayout.isLeftDockCollapsed = true
+    customLayout.isRightDockCollapsed = false
+    customLayout.isBottomDockCollapsed = true
+    customLayout.activeCenterTab = .focus
+    customLayout.activeLeftTab = .tickets
+    customLayout.activeRightTab = .agents
+    store.saveWorkbenchLayout(customLayout)
+
+    let reloadedStore = WorkspaceStateStore(customStorageURL: storeURL)
+    let reloadedLayout = reloadedStore.getWorkbenchLayout()
+    assertEqual(reloadedLayout.leftDockWidth, 320, "Persisted left dock width matches")
+    assertEqual(reloadedLayout.rightDockWidth, 380, "Persisted right dock width matches")
+    assertEqual(reloadedLayout.bottomDockHeightRatio, 0.45, "Persisted bottom dock ratio matches")
+    assertEqual(reloadedLayout.isLeftDockCollapsed, true, "Persisted left dock collapsed state matches")
+    assertEqual(reloadedLayout.isRightDockCollapsed, false, "Persisted right dock uncollapsed state matches")
+    assertEqual(reloadedLayout.isBottomDockCollapsed, true, "Persisted bottom dock collapsed state matches")
+    assertEqual(reloadedLayout.activeCenterTab, CenterTab.focus, "Persisted center tab matches focus")
+    assertEqual(reloadedLayout.activeLeftTab, LeftDockTab.tickets, "Persisted left tab matches tickets")
+    assertEqual(reloadedLayout.activeRightTab, RightDockTab.agents, "Persisted right tab matches agents")
+
+    // Backward compatibility with legacy state files missing workbenchLayout key
+    let legacyURL = tempDir.appendingPathComponent("legacy.json")
+    try! #"{"repoStates":{},"hiddenRepoPaths":[],"customRepoPaths":[]}"#.write(to: legacyURL, atomically: true, encoding: .utf8)
+    let legacyStore = WorkspaceStateStore(customStorageURL: legacyURL)
+    assertEqual(legacyStore.getWorkbenchLayout().activeCenterTab, CenterTab.editor, "Legacy state file decodes with default workbench layout")
+    assertEqual(legacyStore.getWorkbenchLayout().isLeftDockCollapsed, false, "Legacy state file preserves default dock states")
+}
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")

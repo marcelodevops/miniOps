@@ -74,16 +74,61 @@ struct MiniOpsApp: App {
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             }
 
-            CommandMenu("Terminal") {
-                Button("Toggle Terminal") {
-                    NotificationCenter.default.post(name: .miniOpsToggleTerminal, object: nil)
+            CommandMenu("View") {
+                Button("Toggle Sidebar (Left Dock)") {
+                    sharedViewModel.toggleLeftDock()
+                }
+                .keyboardShortcut("1", modifiers: .command)
+
+                Button("Toggle Tools (Right Dock)") {
+                    sharedViewModel.toggleRightDock()
+                }
+                .keyboardShortcut("3", modifiers: .command)
+
+                Button("Toggle Bottom Terminal") {
+                    sharedViewModel.toggleBottomDock()
                 }
                 .keyboardShortcut("j", modifiers: .command)
 
-                Button("Toggle Editor") {
-                    NotificationCenter.default.post(name: .miniOpsToggleEditor, object: nil)
+                Divider()
+
+                Button("Center: Editor") {
+                    sharedViewModel.selectCenterTab(.editor)
                 }
                 .keyboardShortcut("e", modifiers: .command)
+
+                Button("Center: Overview Dashboard") {
+                    sharedViewModel.selectCenterTab(.overview)
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+
+                Button("Center: Focus Active Work") {
+                    sharedViewModel.selectCenterTab(.focus)
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+
+                Button("Center: Knowledge Graph") {
+                    sharedViewModel.selectCenterTab(.graph)
+                }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Reset Workbench Layout") {
+                    sharedViewModel.resetWorkbenchLayout()
+                }
+            }
+
+            CommandMenu("Terminal") {
+                Button("Toggle Terminal") {
+                    sharedViewModel.toggleBottomDock()
+                }
+                .keyboardShortcut("j", modifiers: [.command, .option])
+
+                Button("Toggle Editor") {
+                    sharedViewModel.selectCenterTab(.editor)
+                }
+                .keyboardShortcut("e", modifiers: [.command, .option])
             }
         }
 

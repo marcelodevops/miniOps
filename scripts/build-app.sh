@@ -4,6 +4,11 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Ensure stable macOS SDK is used if available to avoid unreleased SDK macro mismatches
+if [ -d "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk" ] && [ -z "${SDKROOT:-}" ]; then
+    export SDKROOT="/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"
+fi
+
 echo "==> Building miniOps executable..."
 swift build -c release --product miniOps
 

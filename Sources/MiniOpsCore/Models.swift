@@ -92,6 +92,60 @@ public struct RepoLayoutState: Codable, Hashable, Sendable {
     }
 }
 
+public enum CenterTab: String, Codable, CaseIterable, Sendable {
+    case editor = "Editor"
+    case overview = "Overview"
+    case focus = "Focus"
+    case graph = "Graph"
+}
+
+public enum LeftDockTab: String, Codable, CaseIterable, Sendable {
+    case repos = "Repositories"
+    case tickets = "Tickets"
+}
+
+public enum RightDockTab: String, Codable, CaseIterable, Sendable {
+    case changes = "Changes"
+    case agents = "Agents"
+    case stashes = "Stashes"
+    case worktrees = "Worktrees"
+    case notes = "Notes"
+}
+
+public struct WorkbenchLayoutState: Codable, Hashable, Sendable {
+    public var activeCenterTab: CenterTab
+    public var activeLeftTab: LeftDockTab
+    public var activeRightTab: RightDockTab
+    public var isLeftDockCollapsed: Bool
+    public var isRightDockCollapsed: Bool
+    public var isBottomDockCollapsed: Bool
+    public var leftDockWidth: Double
+    public var rightDockWidth: Double
+    public var bottomDockHeightRatio: Double
+
+    public init(
+        activeCenterTab: CenterTab = .editor,
+        activeLeftTab: LeftDockTab = .repos,
+        activeRightTab: RightDockTab = .changes,
+        isLeftDockCollapsed: Bool = false,
+        isRightDockCollapsed: Bool = false,
+        isBottomDockCollapsed: Bool = false,
+        leftDockWidth: Double = 260,
+        rightDockWidth: Double = 300,
+        bottomDockHeightRatio: Double = 0.35
+    ) {
+        self.activeCenterTab = activeCenterTab
+        self.activeLeftTab = activeLeftTab
+        self.activeRightTab = activeRightTab
+        self.isLeftDockCollapsed = isLeftDockCollapsed
+        self.isRightDockCollapsed = isRightDockCollapsed
+        self.isBottomDockCollapsed = isBottomDockCollapsed
+        self.leftDockWidth = leftDockWidth
+        self.rightDockWidth = rightDockWidth
+        self.bottomDockHeightRatio = bottomDockHeightRatio
+    }
+}
+
 public struct GitOperationResult: Sendable {
     public let success: Bool
     public let output: String

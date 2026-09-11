@@ -42,6 +42,7 @@ public struct PersistedAppState: Codable {
     public var hiddenRepoPaths: Set<String>
     public var customRepoPaths: Set<String>
     public var integrationSettings: IntegrationSettings
+    public var workbenchLayout: WorkbenchLayoutState
 
     public init(
         lastWorkspacePath: String? = nil,
@@ -49,7 +50,8 @@ public struct PersistedAppState: Codable {
         repoStates: [String: RepoLayoutState] = [:],
         hiddenRepoPaths: Set<String> = [],
         customRepoPaths: Set<String> = [],
-        integrationSettings: IntegrationSettings = IntegrationSettings()
+        integrationSettings: IntegrationSettings = IntegrationSettings(),
+        workbenchLayout: WorkbenchLayoutState = WorkbenchLayoutState()
     ) {
         self.lastWorkspacePath = lastWorkspacePath
         self.lastSelectedRepoPath = lastSelectedRepoPath
@@ -57,6 +59,7 @@ public struct PersistedAppState: Codable {
         self.hiddenRepoPaths = hiddenRepoPaths
         self.customRepoPaths = customRepoPaths
         self.integrationSettings = integrationSettings
+        self.workbenchLayout = workbenchLayout
     }
 
     enum CodingKeys: String, CodingKey {
@@ -66,6 +69,7 @@ public struct PersistedAppState: Codable {
         case hiddenRepoPaths
         case customRepoPaths
         case integrationSettings
+        case workbenchLayout
     }
 
     public init(from decoder: Decoder) throws {
@@ -76,6 +80,7 @@ public struct PersistedAppState: Codable {
         self.hiddenRepoPaths = try container.decodeIfPresent(Set<String>.self, forKey: .hiddenRepoPaths) ?? []
         self.customRepoPaths = try container.decodeIfPresent(Set<String>.self, forKey: .customRepoPaths) ?? []
         self.integrationSettings = try container.decodeIfPresent(IntegrationSettings.self, forKey: .integrationSettings) ?? IntegrationSettings()
+        self.workbenchLayout = try container.decodeIfPresent(WorkbenchLayoutState.self, forKey: .workbenchLayout) ?? WorkbenchLayoutState()
     }
 }
 
@@ -192,6 +197,17 @@ public final class WorkspaceStateStore: @unchecked Sendable {
     public func setHerdrModeEnabled(_ enabled: Bool) {
         queue.sync {
             cachedState.integrationSettings.herdrModeEnabled = enabled
+            persistToDisk()
+        }
+    }
+
+    public func getWorkbenchLayout() -> WorkbenchLayoutState {
+        queue.sync { cachedState.workbenchLayout }
+    }
+
+    public func saveWorkbenchLayout(_ layout: WorkbenchLayoutState) {
+        queue.sync {
+            cachedState.workbenchLayout = layout
             persistToDisk()
         }
     }

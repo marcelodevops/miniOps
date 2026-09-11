@@ -15,320 +15,88 @@ public enum InspectorTab: String, CaseIterable {
 public struct MainWindowView: View {
     @ObservedObject public var viewModel: WorkspaceViewModel
     @State private var repositorySearch = ""
-    @State private var activeInspectorTab: InspectorTab = .changes
     @State private var isShowingBatchGitSheet: Bool = false
     @State private var isPerformingGitAction: Bool = false
     @State private var gitActionBanner: String?
     @State private var isShowingCommitPushPrompt: Bool = false
     @State private var commitPushMessage: String = ""
     @State private var isTicketNavigatorExpanded: Bool = true
+    @State private var isDraggingLeftDivider: Bool = false
+    @State private var isDraggingRightDivider: Bool = false
+    @State private var isDraggingBottomDivider: Bool = false
 
     public init(viewModel: WorkspaceViewModel) {
         self.viewModel = viewModel
     }
 
     public var body: some View {
-        NavigationSplitView {
-            // Sidebar: Repositories & File Navigator
-            VStack(spacing: 0) {
-                // Workspace Header
+        VStack(spacing: 0) {
+            // 1. Unified Workbench Header Toolbar
+            topWorkbenchToolbar
+
+            // 2. Optional Git Action Banner
+            if let banner = gitActionBanner {
                 HStack {
-                    Image(systemName: "folder.badge.gearshape")
-                        .foregroundColor(.secondary)
-                    Text(URL(fileURLWithPath: viewModel.workspacePath).lastPathComponent)
-                        .font(.system(size: 11, weight: .bold))
-                        .lineLimit(1)
+                    Image(systemName: "info.circle")
+                    Text(banner)
+                        .font(.system(size: 11))
                     Spacer()
-                    Button(action: { viewModel.isShowingCloneSheet = true }) {
-                        Image(systemName: "plus.rectangle.on.folder")
-                            .font(.system(size: 11))
+                    Button(action: { gitActionBanner = nil }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10))
                     }
                     .buttonStyle(.borderless)
-                    .help("Clone or Create Repository (Cmd+Shift+N)")
-
-                    Button(action: { viewModel.chooseWorkspaceDirectory() }) {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Change Workspace Directory")
-
-                    if viewModel.isScanning {
-                        ProgressView().controlSize(.small).help("Scanning repositories…")
-                    }
-                    Button(action: { viewModel.refreshRepositories() }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Rescan Repositories")
-
-                    Button(action: { viewModel.isShowingSettingsSheet = true }) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Settings (Cmd+,)")
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Color(NSColor.controlBackgroundColor))
-
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(Color.accentColor.opacity(0.12))
                 Divider()
-
-                // Repositories List
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack {
-                        Text("REPOSITORIES (\(viewModel.repositories.count))")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button(action: { isShowingBatchGitSheet = true }) {
-                            Text("Batch Git")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Run Batch Git Actions Across Repositories")
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.top, 6)
-                    .padding(.bottom, 2)
-
-                    TextField("Find a repository…", text: $repositorySearch)
-                        .textFieldStyle(.roundedBorder)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                    RepoListView(
-                        repos: viewModel.repositories.filter {
-                            repositorySearch.isEmpty || $0.name.localizedCaseInsensitiveContains(repositorySearch)
-                                || ($0.groupName?.localizedCaseInsensitiveContains(repositorySearch) ?? false)
-                        },
-                        selectedRepoPath: viewModel.selectedRepo?.path,
-                        fileTree: viewModel.fileTree,
-                        selectedFilePath: viewModel.selectedFilePath,
-                        expandedFolderPaths: $viewModel.expandedFolderPaths,
-                        onSelectRepo: { repo in
-                            viewModel.selectRepo(repo)
-                        },
-                        onSelectFile: { filePath in
-                            viewModel.selectFile(filePath)
-                        },
-                        onHideRepo: { repo in
-                            viewModel.hideRepo(repo)
-                        },
-                        onAddToHerdr: { repo in
-                            viewModel.addRepoToHerdr(repo)
-                        }
-                    )
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                Divider()
-
-                // Jira Tickets Navigator
-                TicketNavigatorView(
-                    tickets: viewModel.tickets,
-                    selectedRepoPath: viewModel.selectedRepo?.path,
-                    isExpanded: $isTicketNavigatorExpanded,
-                    isSyncing: viewModel.isSyncingTickets,
-                    syncStatus: viewModel.ticketSyncStatus,
-                    onSelectTicket: { ticket in
-                        viewModel.openTicket(ticket)
-                    },
-                    onCreateBranch: { ticket in
-                        viewModel.createBranchForTicket(ticket)
-                    },
-                    onRefresh: {
-                        viewModel.syncJiraTickets()
-                    }
-                )
-                .background(Color(NSColor.controlBackgroundColor).opacity(0.35))
             }
-            .frame(minWidth: 240, idealWidth: 280, maxWidth: 350, maxHeight: .infinity)
-            .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 350)
-        } detail: {
-            // Main Stage
-            if let repo = viewModel.selectedRepo {
-                VStack(spacing: 0) {
-                    // Top App Toolbar
-                    topToolbar(repo: repo)
 
-                    // Optional Git Banner
-                    if let banner = gitActionBanner {
-                        HStack {
-                            Image(systemName: "info.circle")
-                            Text(banner)
-                                .font(.system(size: 11))
-                            Spacer()
-                            Button(action: { gitActionBanner = nil }) {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 10))
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-                        .background(Color.accentColor.opacity(0.12))
-                        Divider()
+            Divider()
+
+            // 3. Four-Zone Workbench Body
+            GeometryReader { geo in
+                HStack(spacing: 0) {
+                    // LEFT DOCK: Repositories & Tickets
+                    if !viewModel.workbenchLayout.isLeftDockCollapsed {
+                        leftDockView
+                            .frame(width: CGFloat(viewModel.workbenchLayout.leftDockWidth))
+
+                        // Draggable Left Divider
+                        leftDividerBar
                     }
 
-                    Divider()
+                    // CENTER STAGE & BOTTOM TERMINAL DOCK
+                    VStack(spacing: 0) {
+                        // Center Document / View Stage
+                        centerStageView
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    // Main Content: Canvas or Inspector Panel
-                    if viewModel.isGitInspectorOpen {
-                        VStack(spacing: 0) {
-                            // Inspector tab header
-                            HStack(spacing: 8) {
-                                // Seven segments exceed any fixed cap: a hard maxWidth
-                                // made NSSegmentedControl overflow and clip "Changes".
-                                // Scroll horizontally instead so every tab stays reachable.
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    Picker("", selection: $activeInspectorTab) {
-                                        Text("Changes (\(repo.changedFiles.count))").tag(InspectorTab.changes)
-                                        Text("Stashes").tag(InspectorTab.stashes)
-                                        Text("Worktrees").tag(InspectorTab.worktrees)
-                                        Text("Notes").tag(InspectorTab.notes)
-                                        Text("Agents (\(viewModel.activeAgents.count))").tag(InspectorTab.agents)
-                                        Text("Tickets (\(viewModel.tickets.count))").tag(InspectorTab.tickets)
-                                        Text("Graph").tag(InspectorTab.graph)
-                                    }
-                                    .pickerStyle(.segmented)
-                                    .fixedSize()
-                                    .padding(.vertical, 1)
-                                }
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        // BOTTOM DOCK: Embedded Terminal
+                        if !viewModel.workbenchLayout.isBottomDockCollapsed {
+                            bottomDividerBar(containerHeight: geo.size.height)
 
-                                Button(action: {
-                                    withAnimation {
-                                        viewModel.isGitInspectorOpen = false
-                                        viewModel.saveCurrentRepoLayout()
-                                    }
-                                }) {
-                                    Image(systemName: "xmark.circle")
-                                        .font(.system(size: 13))
-                                        .foregroundColor(.secondary)
-                                }
-                                .buttonStyle(.borderless)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color(NSColor.controlBackgroundColor))
-
-                            Divider()
-
-                            switch activeInspectorTab {
-                            case .changes:
-                                GitChangesView(
-                                    repoPath: repo.path,
-                                    changes: repo.changedFiles,
-                                    selectedFilesForCommit: $viewModel.selectedFilesForCommit,
-                                    onGitOperationDone: {
-                                        viewModel.refreshCurrentRepoStatus()
-                                    }
-                                )
-                            case .stashes:
-                                StashManagerView(
-                                    repoPath: repo.path,
-                                    onStashChanged: {
-                                        viewModel.refreshCurrentRepoStatus()
-                                    }
-                                )
-                            case .worktrees:
-                                WorktreeManagerView(
-                                    repoPath: repo.path,
-                                    onWorktreeChanged: {
-                                        viewModel.refreshCurrentRepoStatus()
-                                    }
-                                )
-                            case .notes:
-                                RepoNotesView(repoPath: repo.path)
-                            case .agents:
-                                AgentInspectorView(
-                                    agents: viewModel.activeAgents,
-                                    onSelectRepo: { path in
-                                        if let target = viewModel.repositories.first(where: { $0.path == path }) {
-                                            viewModel.selectRepo(target)
-                                        }
-                                    },
-                                    onRefresh: {
-                                        viewModel.refreshAgents()
-                                    }
-                                )
-                            case .tickets:
-                                TicketManagerView(
-                                    repoPath: repo.path,
-                                    tickets: viewModel.tickets,
-                                    onBranchCreated: {
-                                        viewModel.refreshCurrentRepoStatus()
-                                    },
-                                    onRefresh: {
-                                        viewModel.refreshTickets()
-                                    }
-                                )
-                            case .graph:
-                                GraphifyVisualizerView(
-                                    graphData: viewModel.graphData,
-                                    onSelectFile: { filePath in
-                                        viewModel.selectFile(filePath)
-                                    },
-                                    onRefresh: {
-                                        viewModel.refreshGraph()
-                                    }
-                                )
-                            }
+                            let termHeight = max(geo.size.height * CGFloat(viewModel.workbenchLayout.bottomDockHeightRatio), 110)
+                            bottomDockView
+                                .frame(height: termHeight)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        SplitWorkspaceCanvasView(
-                            repoPath: repo.path,
-                            terminalRatio: $viewModel.terminalRatio,
-                            isEditorCollapsed: $viewModel.isEditorCollapsed,
-                            isTerminalCollapsed: $viewModel.isTerminalCollapsed,
-                            editorContent: {
-                                if let selectedFile = viewModel.selectedFilePath {
-                                    EditorContainerView(
-                                        text: $viewModel.fileContent,
-                                        isModified: $viewModel.isEditorModified,
-                                        filePath: selectedFile,
-                                        onSave: {
-                                            viewModel.saveCurrentFile()
-                                        }
-                                    )
-                                } else {
-                                    VStack(spacing: 12) {
-                                        Spacer()
-                                        Image(systemName: "doc.text.magnifyingglass")
-                                            .font(.system(size: 36))
-                                            .foregroundColor(.secondary.opacity(0.6))
-                                        Text("Select a file from the sidebar to view and edit")
-                                            .font(.system(size: 13))
-                                            .foregroundColor(.secondary)
-                                        Spacer()
-                                    }
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                    .background(Color(NSColor.textBackgroundColor))
-                                }
-                            },
-                            onLayoutChange: {
-                                viewModel.saveCurrentRepoLayout()
-                            }
-                        )
                     }
-                }
-            } else {
-                VStack(spacing: 12) {
-                    Image(systemName: "terminal.fill")
-                        .font(.system(size: 48))
-                        .foregroundColor(.accentColor.opacity(0.8))
-                    Text("No Repository Selected")
-                        .font(.title3.bold())
-                    Text("Choose a repository from the sidebar to start working.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    // RIGHT DOCK: Context Tools (Changes, Agents, Stashes, Worktrees, Notes)
+                    if !viewModel.workbenchLayout.isRightDockCollapsed {
+                        rightDividerBar
+
+                        rightDockView
+                            .frame(width: CGFloat(viewModel.workbenchLayout.rightDockWidth))
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+
+            // 4. Workbench Status Bar
+            WorkbenchStatusBarView(viewModel: viewModel)
         }
         .sheet(isPresented: $isShowingBatchGitSheet) {
             BatchGitSheetView(repos: viewModel.repositories, onComplete: {
@@ -375,135 +143,599 @@ public struct MainWindowView: View {
         }
     }
 
-    private func topToolbar(repo: RepoInfo) -> some View {
-        HStack(spacing: 10) {
-            // Repo info & branch switcher
-            HStack(spacing: 6) {
-                Image(systemName: "folder.fill")
-                    .foregroundColor(.accentColor)
-                Text(repo.name)
-                    .font(.system(size: 13, weight: .bold))
-
-                BranchSwitcherView(
-                    repoPath: repo.path,
-                    currentBranch: repo.branch,
-                    onBranchChanged: {
-                        viewModel.refreshCurrentRepoStatus()
-                    }
-                )
-
-                if repo.isDirty {
-                    Circle()
-                        .fill(Color.orange)
-                        .frame(width: 8, height: 8)
+    // MARK: - Top Workbench Toolbar
+    private var topWorkbenchToolbar: some View {
+        HStack(spacing: 12) {
+            // Left: Toggle Left Dock & Center Tabs
+            HStack(spacing: 8) {
+                Button(action: { viewModel.toggleLeftDock() }) {
+                    Image(systemName: viewModel.workbenchLayout.isLeftDockCollapsed ? "sidebar.left" : "sidebar.leading")
+                        .font(.system(size: 11))
+                        .foregroundColor(viewModel.workbenchLayout.isLeftDockCollapsed ? .secondary : .accentColor)
                 }
+                .buttonStyle(.borderless)
+                .help("Toggle Sidebar (Cmd+1)")
 
-                if repo.ahead > 0 || repo.behind > 0 {
-                    HStack(spacing: 2) {
-                        if repo.ahead > 0 { Text("↑\(repo.ahead)").foregroundColor(.green) }
-                        if repo.behind > 0 { Text("↓\(repo.behind)").foregroundColor(.blue) }
+                Picker("", selection: Binding(
+                    get: { viewModel.workbenchLayout.activeCenterTab },
+                    set: { viewModel.selectCenterTab($0) }
+                )) {
+                    ForEach(CenterTab.allCases, id: \.self) { tab in
+                        Text(tab.rawValue).tag(tab)
                     }
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
                 }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .fixedSize()
             }
 
             Spacer()
 
-            // Quick Git Actions: Fetch, Pull & Push
-            HStack(spacing: 4) {
-                Button(action: executeFetch) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                        Text("Fetch")
-                    }
-                    .font(.system(size: 11))
-                }
-                .disabled(isPerformingGitAction)
-                .help("Fetch all remotes and prune")
+            // Center / Right: Git Actions for selected repo
+            if let repo = viewModel.selectedRepo {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder.fill")
+                        .foregroundColor(.accentColor)
+                    Text(repo.name)
+                        .font(.system(size: 12, weight: .bold))
 
-                Button(action: executePull) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.down.circle")
-                        Text("Pull")
-                    }
-                    .font(.system(size: 11))
-                }
-                .disabled(isPerformingGitAction)
-                .help("Pull current branch (--ff-only)")
+                    BranchSwitcherView(
+                        repoPath: repo.path,
+                        currentBranch: repo.branch,
+                        onBranchChanged: {
+                            viewModel.refreshCurrentRepoStatus()
+                        }
+                    )
 
-                Button(action: executePush) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.up.circle")
-                        Text("Push")
+                    if repo.isDirty {
+                        Circle()
+                            .fill(Color.orange)
+                            .frame(width: 7, height: 7)
                     }
-                    .font(.system(size: 11))
-                }
-                .disabled(isPerformingGitAction)
-                .help("Push current branch to remote")
 
-                Button(action: promptForCommitAndPush) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "bolt.horizontal.circle")
-                        Text("Commit & Push")
+                    if repo.ahead > 0 || repo.behind > 0 {
+                        HStack(spacing: 2) {
+                            if repo.ahead > 0 { Text("↑\(repo.ahead)").foregroundColor(.green) }
+                            if repo.behind > 0 { Text("↓\(repo.behind)").foregroundColor(.blue) }
+                        }
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
                     }
-                    .font(.system(size: 11))
+
+                    Divider().frame(height: 14)
+
+                    // Quick Git Actions: Fetch, Pull, Push, Commit & Push
+                    HStack(spacing: 4) {
+                        Button(action: executeFetch) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                Text("Fetch")
+                            }
+                            .font(.system(size: 11))
+                        }
+                        .disabled(isPerformingGitAction)
+                        .help("Fetch all remotes and prune")
+
+                        Button(action: executePull) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.down.circle")
+                                Text("Pull")
+                            }
+                            .font(.system(size: 11))
+                        }
+                        .disabled(isPerformingGitAction)
+                        .help("Pull current branch (--ff-only)")
+
+                        Button(action: executePush) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.up.circle")
+                                Text("Push")
+                            }
+                            .font(.system(size: 11))
+                        }
+                        .disabled(isPerformingGitAction)
+                        .help("Push current branch to remote")
+
+                        Button(action: promptForCommitAndPush) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "bolt.horizontal.circle")
+                                Text("Commit & Push")
+                            }
+                            .font(.system(size: 11))
+                        }
+                        .disabled(isPerformingGitAction || !repo.isDirty)
+                        .help("Stage all changes, commit and push (xgit)")
+                    }
                 }
-                .disabled(isPerformingGitAction || !repo.isDirty)
-                .help("Stage all changes, commit with a custom message and push — in one step (xgit)")
+            } else {
+                Text(URL(fileURLWithPath: viewModel.workspacePath).lastPathComponent)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.secondary)
             }
 
-            Divider().frame(height: 16)
+            Spacer()
 
-            // View toggles
-            HStack(spacing: 8) {
-                // Git Inspector toggle
-                Button(action: {
-                    withAnimation {
-                        viewModel.isGitInspectorOpen.toggle()
-                        viewModel.saveCurrentRepoLayout()
-                    }
-                }) {
+            // Far Right: Dock Toggles
+            HStack(spacing: 6) {
+                Button(action: { viewModel.toggleBottomDock() }) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 11))
+                        .foregroundColor(viewModel.workbenchLayout.isBottomDockCollapsed ? .secondary : .accentColor)
+                }
+                .buttonStyle(.borderless)
+                .help("Toggle Terminal (Cmd+J)")
+
+                Button(action: { viewModel.toggleRightDock() }) {
                     HStack(spacing: 4) {
                         Image(systemName: "sidebar.right")
-                        Text("Tools (\(repo.changedFiles.count))")
+                        if let repo = viewModel.selectedRepo, repo.changedFiles.count > 0 {
+                            Text("Tools (\(repo.changedFiles.count))")
+                        } else {
+                            Text("Tools")
+                        }
                     }
-                    .font(.system(size: 11, weight: viewModel.isGitInspectorOpen ? .bold : .regular))
+                    .font(.system(size: 11, weight: viewModel.workbenchLayout.isRightDockCollapsed ? .regular : .bold))
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(viewModel.isGitInspectorOpen ? .accentColor : .secondary.opacity(0.2))
-
-                // Toggle Editor
-                Button(action: {
-                    withAnimation {
-                        viewModel.isEditorCollapsed.toggle()
-                        viewModel.saveCurrentRepoLayout()
-                    }
-                }) {
-                    Image(systemName: "doc.text")
-                }
-                .buttonStyle(.borderless)
-                .foregroundColor(viewModel.isEditorCollapsed ? .secondary : .accentColor)
-                .help("Toggle Editor (Cmd+E)")
-
-                // Toggle Terminal
-                Button(action: {
-                    withAnimation {
-                        viewModel.isTerminalCollapsed.toggle()
-                        viewModel.saveCurrentRepoLayout()
-                    }
-                }) {
-                    Image(systemName: "terminal")
-                }
-                .buttonStyle(.borderless)
-                .foregroundColor(viewModel.isTerminalCollapsed ? .secondary : .accentColor)
-                .help("Toggle Terminal (Cmd+J)")
+                .tint(viewModel.workbenchLayout.isRightDockCollapsed ? .secondary.opacity(0.2) : .accentColor)
+                .help("Toggle Tools Panel (Cmd+3)")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(Color(NSColor.windowBackgroundColor))
     }
 
+    // MARK: - Left Dock View
+    private var leftDockView: some View {
+        VStack(spacing: 0) {
+            // Left Dock Header
+            HStack(spacing: 6) {
+                Picker("", selection: $viewModel.workbenchLayout.activeLeftTab) {
+                    Text("Repos (\(viewModel.repositories.count))").tag(LeftDockTab.repos)
+                    Text("Tickets (\(viewModel.tickets.count))").tag(LeftDockTab.tickets)
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+
+                Spacer()
+
+                Button(action: { viewModel.isShowingCloneSheet = true }) {
+                    Image(systemName: "plus.rectangle.on.folder")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .help("Clone or Create Repository (Cmd+Shift+N)")
+
+                Button(action: { viewModel.chooseWorkspaceDirectory() }) {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .help("Change Workspace Directory")
+
+                Button(action: { viewModel.refreshRepositories() }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .help("Rescan Repositories")
+
+                Button(action: { viewModel.isShowingSettingsSheet = true }) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .help("Settings (Cmd+,)")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color(NSColor.controlBackgroundColor))
+
+            Divider()
+
+            // Content according to activeLeftTab
+            switch viewModel.workbenchLayout.activeLeftTab {
+            case .repos:
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("REPOSITORIES (\(viewModel.repositories.count))")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button(action: { isShowingBatchGitSheet = true }) {
+                            Text("Batch Git")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Run Batch Git Actions Across Repositories")
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 6)
+                    .padding(.bottom, 2)
+
+                    TextField("Find a repository…", text: $repositorySearch)
+                        .textFieldStyle(.roundedBorder)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+
+                    RepoListView(
+                        repos: viewModel.repositories.filter {
+                            repositorySearch.isEmpty || $0.name.localizedCaseInsensitiveContains(repositorySearch)
+                                || ($0.groupName?.localizedCaseInsensitiveContains(repositorySearch) ?? false)
+                        },
+                        selectedRepoPath: viewModel.selectedRepo?.path,
+                        fileTree: viewModel.fileTree,
+                        selectedFilePath: viewModel.selectedFilePath,
+                        expandedFolderPaths: $viewModel.expandedFolderPaths,
+                        onSelectRepo: { repo in
+                            viewModel.selectRepo(repo)
+                        },
+                        onSelectFile: { filePath in
+                            viewModel.selectFile(filePath)
+                        },
+                        onHideRepo: { repo in
+                            viewModel.hideRepo(repo)
+                        },
+                        onAddToHerdr: { repo in
+                            viewModel.addRepoToHerdr(repo)
+                        }
+                    )
+                    .frame(maxHeight: .infinity)
+                }
+
+            case .tickets:
+                TicketNavigatorView(
+                    tickets: viewModel.tickets,
+                    selectedRepoPath: viewModel.selectedRepo?.path,
+                    isExpanded: $isTicketNavigatorExpanded,
+                    isSyncing: viewModel.isSyncingTickets,
+                    syncStatus: viewModel.ticketSyncStatus,
+                    onSelectTicket: { ticket in
+                        viewModel.openTicket(ticket)
+                    },
+                    onCreateBranch: { ticket in
+                        viewModel.createBranchForTicket(ticket)
+                    },
+                    onRefresh: {
+                        viewModel.syncJiraTickets()
+                    }
+                )
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+    }
+
+    // MARK: - Center Stage View
+    @ViewBuilder
+    private var centerStageView: some View {
+        switch viewModel.workbenchLayout.activeCenterTab {
+        case .editor:
+            editorStageContent
+        case .overview:
+            OverviewDashboardView(viewModel: viewModel)
+        case .focus:
+            FocusWorkView(viewModel: viewModel)
+        case .graph:
+            GraphifyVisualizerView(
+                graphData: viewModel.graphData,
+                onSelectFile: { filePath in
+                    viewModel.selectFile(filePath)
+                    viewModel.selectCenterTab(.editor)
+                },
+                onRefresh: {
+                    viewModel.refreshGraph()
+                }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var editorStageContent: some View {
+        if let selectedFile = viewModel.selectedFilePath {
+            EditorContainerView(
+                text: $viewModel.fileContent,
+                isModified: $viewModel.isEditorModified,
+                filePath: selectedFile,
+                onSave: {
+                    viewModel.saveCurrentFile()
+                }
+            )
+        } else if let repo = viewModel.selectedRepo {
+            // Selected repo welcome card
+            VStack(spacing: 14) {
+                Spacer()
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 40))
+                    .foregroundColor(.accentColor)
+                Text(repo.name)
+                    .font(.title2.bold())
+                Text("Branch: \(repo.branch) • \(repo.changedFiles.count) modified files")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 10) {
+                    Button("View Changes") {
+                        viewModel.workbenchLayout.activeRightTab = .changes
+                        viewModel.workbenchLayout.isRightDockCollapsed = false
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Open Terminal") {
+                        viewModel.workbenchLayout.isBottomDockCollapsed = false
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("View Overview") {
+                        viewModel.selectCenterTab(.overview)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(NSColor.textBackgroundColor))
+        } else {
+            VStack(spacing: 14) {
+                Spacer()
+                Image(systemName: "macwindow")
+                    .font(.system(size: 44))
+                    .foregroundColor(.accentColor.opacity(0.7))
+                Text("miniOps Native Workbench")
+                    .font(.title2.bold())
+                Text("Select a repository from the left dock, or browse workspace tools.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 10) {
+                    Button("Open Workspace Overview") {
+                        viewModel.selectCenterTab(.overview)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Browse Tickets") {
+                        viewModel.workbenchLayout.activeLeftTab = .tickets
+                        viewModel.workbenchLayout.isLeftDockCollapsed = false
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(NSColor.textBackgroundColor))
+        }
+    }
+
+    // MARK: - Right Dock View
+    private var rightDockView: some View {
+        VStack(spacing: 0) {
+            // Header with tab selector and collapse button
+            HStack(spacing: 6) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Picker("", selection: $viewModel.workbenchLayout.activeRightTab) {
+                        let changedCount = viewModel.selectedRepo?.changedFiles.count ?? 0
+                        Text("Changes (\(changedCount))").tag(RightDockTab.changes)
+                        Text("Agents (\(viewModel.activeAgents.count))").tag(RightDockTab.agents)
+                        Text("Stashes").tag(RightDockTab.stashes)
+                        Text("Worktrees").tag(RightDockTab.worktrees)
+                        Text("Notes").tag(RightDockTab.notes)
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
+
+                Spacer()
+
+                Button(action: {
+                    withAnimation {
+                        viewModel.toggleRightDock()
+                    }
+                }) {
+                    Image(systemName: "xmark.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Close Tools Panel (Cmd+3)")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color(NSColor.controlBackgroundColor))
+
+            Divider()
+
+            // Content according to activeRightTab
+            switch viewModel.workbenchLayout.activeRightTab {
+            case .changes:
+                if let repo = viewModel.selectedRepo {
+                    GitChangesView(
+                        repoPath: repo.path,
+                        changes: repo.changedFiles,
+                        selectedFilesForCommit: $viewModel.selectedFilesForCommit,
+                        onGitOperationDone: {
+                            viewModel.refreshCurrentRepoStatus()
+                        }
+                    )
+                } else {
+                    noRepoPlaceholder(for: "Git Changes")
+                }
+
+            case .agents:
+                AgentInspectorView(
+                    agents: viewModel.activeAgents,
+                    onSelectRepo: { path in
+                        if let target = viewModel.repositories.first(where: { $0.path == path }) {
+                            viewModel.selectRepo(target)
+                        }
+                    },
+                    onRefresh: {
+                        viewModel.refreshAgents()
+                    }
+                )
+
+            case .stashes:
+                if let repo = viewModel.selectedRepo {
+                    StashManagerView(
+                        repoPath: repo.path,
+                        onStashChanged: {
+                            viewModel.refreshCurrentRepoStatus()
+                        }
+                    )
+                } else {
+                    noRepoPlaceholder(for: "Git Stashes")
+                }
+
+            case .worktrees:
+                if let repo = viewModel.selectedRepo {
+                    WorktreeManagerView(
+                        repoPath: repo.path,
+                        onWorktreeChanged: {
+                            viewModel.refreshCurrentRepoStatus()
+                        }
+                    )
+                } else {
+                    noRepoPlaceholder(for: "Git Worktrees")
+                }
+
+            case .notes:
+                if let repo = viewModel.selectedRepo {
+                    RepoNotesView(repoPath: repo.path)
+                } else {
+                    noRepoPlaceholder(for: "Repository Notes")
+                }
+            }
+        }
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
+    }
+
+    private func noRepoPlaceholder(for feature: String) -> some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: "folder.badge.questionmark")
+                .font(.system(size: 28))
+                .foregroundColor(.secondary.opacity(0.6))
+            Text("\(feature) requires a repository")
+                .font(.system(size: 12, weight: .semibold))
+            Text("Select a repository from the left dock to inspect \(feature.lowercased()).")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Bottom Dock View (Terminal)
+    private var bottomDockView: some View {
+        VStack(spacing: 0) {
+            // Terminal Header
+            HStack(spacing: 8) {
+                Image(systemName: "terminal")
+                    .foregroundColor(.accentColor)
+                    .font(.system(size: 11))
+                Text("Terminal")
+                    .font(.system(size: 11, weight: .semibold))
+
+                let pathLabel = viewModel.selectedRepo?.name ?? URL(fileURLWithPath: viewModel.workspacePath).lastPathComponent
+                Text("(\(pathLabel) • /bin/zsh -l)")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                Button(action: {
+                    withAnimation {
+                        viewModel.toggleBottomDock()
+                    }
+                }) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.borderless)
+                .help("Hide Terminal (Cmd+J)")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Color(NSColor.windowBackgroundColor))
+            .overlay(Divider(), alignment: .top)
+
+            let termPath = viewModel.selectedRepo?.path ?? viewModel.workspacePath
+            EmbeddedTerminalRepresentable(repoPath: termPath)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    // MARK: - Dividers
+    private var leftDividerBar: some View {
+        Rectangle()
+            .fill(isDraggingLeftDivider ? Color.accentColor : Color(NSColor.separatorColor))
+            .frame(width: 4)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture()
+                    .onChanged { val in
+                        isDraggingLeftDivider = true
+                        let newW = viewModel.workbenchLayout.leftDockWidth + Double(val.translation.width)
+                        viewModel.workbenchLayout.leftDockWidth = min(max(newW, 180), 450)
+                    }
+                    .onEnded { _ in
+                        isDraggingLeftDivider = false
+                        viewModel.saveWorkbenchLayout()
+                    }
+            )
+    }
+
+    private var rightDividerBar: some View {
+        Rectangle()
+            .fill(isDraggingRightDivider ? Color.accentColor : Color(NSColor.separatorColor))
+            .frame(width: 4)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture()
+                    .onChanged { val in
+                        isDraggingRightDivider = true
+                        let newW = viewModel.workbenchLayout.rightDockWidth - Double(val.translation.width)
+                        viewModel.workbenchLayout.rightDockWidth = min(max(newW, 200), 500)
+                    }
+                    .onEnded { _ in
+                        isDraggingRightDivider = false
+                        viewModel.saveWorkbenchLayout()
+                    }
+            )
+    }
+
+    private func bottomDividerBar(containerHeight: CGFloat) -> some View {
+        Rectangle()
+            .fill(isDraggingBottomDivider ? Color.accentColor : Color(NSColor.separatorColor))
+            .frame(height: 4)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture()
+                    .onChanged { val in
+                        isDraggingBottomDivider = true
+                        let currentTermHeight = containerHeight * CGFloat(viewModel.workbenchLayout.bottomDockHeightRatio)
+                        let newHeight = currentTermHeight - val.translation.height
+                        let newRatio = Double(newHeight / containerHeight)
+                        viewModel.workbenchLayout.bottomDockHeightRatio = min(max(newRatio, 0.15), 0.70)
+                    }
+                    .onEnded { _ in
+                        isDraggingBottomDivider = false
+                        viewModel.saveWorkbenchLayout()
+                    }
+            )
+    }
+
+    // MARK: - Git Operations
     private func executeFetch() {
         guard let repo = viewModel.selectedRepo else { return }
         isPerformingGitAction = true
@@ -550,25 +782,28 @@ public struct MainWindowView: View {
     }
 
     private func promptForCommitAndPush() {
-        guard viewModel.selectedRepo != nil, !isPerformingGitAction else { return }
+        guard let repo = viewModel.selectedRepo, repo.isDirty else { return }
         commitPushMessage = ""
         isShowingCommitPushPrompt = true
     }
 
     private func executeAddCommitPush() {
         guard let repo = viewModel.selectedRepo else { return }
-        let message = commitPushMessage
-        guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let msg = commitPushMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !msg.isEmpty else { return }
 
         isPerformingGitAction = true
-        gitActionBanner = "Staging, committing and pushing \(repo.name)..."
+        gitActionBanner = "Staging, committing, and pushing for \(repo.name)..."
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let res = GitService.shared.addCommitPush(repoPath: repo.path, message: message)
+            let res = GitService.shared.addCommitPush(repoPath: repo.path, message: msg)
             DispatchQueue.main.async {
                 isPerformingGitAction = false
-                gitActionBanner = res.success ? res.output : (res.error ?? "Commit & push failed.")
-                commitPushMessage = ""
+                if res.success {
+                    gitActionBanner = res.output.isEmpty ? "Committed and pushed successfully." : res.output
+                } else {
+                    gitActionBanner = res.error ?? "Commit & push failed."
+                }
                 viewModel.refreshCurrentRepoStatus()
             }
         }
