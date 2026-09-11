@@ -13,8 +13,8 @@ Assume the current `/Users/mac/repos/myops-os` checkout is the reference. Before
 | Area | myops-os reference | miniOps implementation | Status | Work needed |
 |---|---|---|---|---|
 | Navigation | Overview, Focus, Repos, Tickets, Agents, Graph, Settings | 4-zone workbench with Left/Right/Bottom docks, Center stage tabs, and Status bar | Done (M2) | Coexists without depending on selected repo; movable docks |
-| Overview | Summary tiles, attention lists, charts with filter links | Center Stage `OverviewDashboardView` | Partial (M4) | Hook up filter clicks to activate respective dock panels |
-| Focus | Active ticket with repository, agent, and context cards | Center Stage `FocusWorkView` | Partial (M4) | Retain selected active ticket across workspace switches |
+| Overview | Summary tiles, attention lists, charts with filter links | Center Stage `OverviewDashboardView`; summary tiles open filtered dock panels | Partial (M4) | Add reference chart groups and chart-to-filter navigation |
+| Focus | Active ticket with repository, agent, and context cards | Center Stage `FocusWorkView`; persisted ticket and inferred repository/agent context | Partial (M4) | Add the reference AI-ready context card and fixture parity checks |
 | Repositories | Searchable/filterable cards, groups, health and sync information | Repos panel in Left Dock; grouped tree, dirty badges, branch tags, ahead/behind counters | Done (M3) | Full secondary actions: Terminal, External Editor, Remote URL, Finder |
 | Repository work | Editor above terminal on the left, repository detail drawer on the right | Persistent center Editor/Diff, bottom SwiftTerm dock, right Context Tools dock | Done (M3) | Center Diff stage; non-blocking diff loading; repo-isolated commits |
 | Changes, stash, worktrees, notes | Sections/actions in repository detail | `GitChangesView` in dock; `StashManagerView`, `WorktreeManagerView`, `RepoNotesView` | Done (M3) | Quick jump menu between Git context tools; Center Diff inspector |
@@ -102,7 +102,7 @@ The first version needs predictable left/right/bottom docks, not a general-purpo
 11. End-to-end Test 31 verifies:
     - UI check verifying rendered diff updates (`activeDiffContent`) after same-file external edits through both refresh routes (`refreshCurrentRepoStatus` and `refreshRepositories`).
     - Deliberately blocked Repo A's commit in-flight via concurrency gate, switched to Repo B while A's commit was running, released it, and verified isolation in both repositories.
-12. The full automated suite passes with 1,350 checks, including Test 32's subprocess/run-loop regression coverage.
+12. The full automated suite passes with 1,371 checks, including Test 32's subprocess/run-loop regression coverage.
 
 Candidate packaging, window-size checks, interactive runtime acceptance, daily-workflow use, backup, and rollback verification belong exclusively to Milestone 6. They do not reopen this implementation milestone.
 
@@ -113,6 +113,15 @@ Candidate packaging, window-size checks, interactive runtime acceptance, daily-w
 - Preserve active work across refresh/relaunch, and show missing associations as unavailable instead of guessing.
 
 **Gate:** counts match the reference for identical fixtures; clicking summaries opens the expected filtered panel; Focus links to the correct repository and agents.
+
+**Status:** Partial (2026-09-11):
+1. Active Focus ticket selection is persisted per workspace in `WorkbenchLayoutState` and restored across relaunch.
+2. Focus repository context is resolved from a local markdown ticket path or the reference-compatible ticket-key match in repository branch/name/path; agent context is restricted to the associated repository.
+3. Missing ticket/repository associations are shown as unavailable instead of falling back to the currently selected repository.
+4. Overview repository, ticket, and agent summary tiles open their dock panels with synchronized Dirty, Open, and Waiting filters.
+5. Test 33 covers Focus persistence, ticket-to-repository-to-agent association, false Jira-cache association prevention, and Overview filter navigation.
+
+**Remaining:** add the reference Overview chart groups and chart-to-filter navigation, then compare summary/chart counts against identical myOps fixtures. Repositories by type/origin require corresponding metadata in the native repository model before those reference charts can be reproduced honestly.
 
 ### 5. Complete the remaining feature parity
 
