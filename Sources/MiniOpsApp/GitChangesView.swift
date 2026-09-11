@@ -19,17 +19,29 @@ public struct GitChangesView: View {
     private static let splitSpace = "gitChangesSplit"
 
     public let onGitOperationDone: () -> Void
+    public var onOpenStashes: (() -> Void)?
+    public var onOpenWorktrees: (() -> Void)?
+    public var onOpenBatchGit: (() -> Void)?
+    public var onInspectDiffInCenter: ((String) -> Void)?
 
     public init(
         repoPath: String,
         changes: [GitFileChange],
         selectedFilesForCommit: Binding<Set<String>>,
-        onGitOperationDone: @escaping () -> Void
+        onGitOperationDone: @escaping () -> Void,
+        onOpenStashes: (() -> Void)? = nil,
+        onOpenWorktrees: (() -> Void)? = nil,
+        onOpenBatchGit: (() -> Void)? = nil,
+        onInspectDiffInCenter: ((String) -> Void)? = nil
     ) {
         self.repoPath = repoPath
         self.changes = changes
         self._selectedFilesForCommit = selectedFilesForCommit
         self.onGitOperationDone = onGitOperationDone
+        self.onOpenStashes = onOpenStashes
+        self.onOpenWorktrees = onOpenWorktrees
+        self.onOpenBatchGit = onOpenBatchGit
+        self.onInspectDiffInCenter = onInspectDiffInCenter
     }
 
     public var body: some View {
@@ -105,7 +117,7 @@ public struct GitChangesView: View {
         // Left list: Changed files with selection checkboxes
         VStack(alignment: .leading, spacing: 0) {
                 // Header
-                HStack {
+                HStack(spacing: 6) {
                     Text("Git Changes (\(changes.count))")
                         .font(.system(size: 12, weight: .bold))
                     Spacer()
@@ -120,6 +132,36 @@ public struct GitChangesView: View {
                     }
                     .buttonStyle(.borderless)
                     .font(.system(size: 11))
+
+                    Menu {
+                        if let onInspectDiffInCenter, let file = currentlyViewingDiffFile {
+                            Button("Open Current Diff in Center Stage") {
+                                onInspectDiffInCenter(file)
+                            }
+                            Divider()
+                        }
+                        if let onOpenStashes {
+                            Button("Manage Stashes...") {
+                                onOpenStashes()
+                            }
+                        }
+                        if let onOpenWorktrees {
+                            Button("Manage Worktrees...") {
+                                onOpenWorktrees()
+                            }
+                        }
+                        if let onOpenBatchGit {
+                            Button("Batch Git Operations...") {
+                                onOpenBatchGit()
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 11))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Git context tools (Stashes, Worktrees, Batch Git)")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -174,6 +216,19 @@ public struct GitChangesView: View {
 
                                 Spacer()
 
+                                // Inspect in center stage button
+                                if let onInspectDiffInCenter {
+                                    Button(action: {
+                                        currentlyViewingDiffFile = change.path
+                                        onInspectDiffInCenter(change.path)
+                                    }) {
+                                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                            .font(.system(size: 10))
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("Inspect full diff in Center Stage")
+                                }
+
                                 // View Diff Button
                                 Button(action: {
                                     loadDiff(for: change.path)
@@ -182,7 +237,7 @@ public struct GitChangesView: View {
                                         .font(.system(size: 10))
                                 }
                                 .buttonStyle(.borderless)
-                                .help("Inspect diff")
+                                .help("Inspect diff in pane")
                             }
                             .padding(.vertical, 2)
                             .contentShape(Rectangle())
@@ -255,6 +310,20 @@ public struct GitChangesView: View {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
+
+                    if let onInspectDiffInCenter, let file = currentlyViewingDiffFile {
+                        Button(action: {
+                            onInspectDiffInCenter(file)
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                Text("Center")
+                            }
+                            .font(.system(size: 10))
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Expand diff to Center Stage")
+                    }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)

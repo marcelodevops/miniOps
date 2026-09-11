@@ -1363,7 +1363,7 @@ do {
     assertEqual(defaultLayout.activeRightTab, RightDockTab.changes, "Default right tab is changes")
 
     // Enum cases and titles
-    assertEqual(CenterTab.allCases.count, 4, "Four center stage tabs")
+    assertEqual(CenterTab.allCases.count, 5, "Five center stage tabs")
     assertEqual(defaultLayout.panels(in: .left).count, 2, "Two left dock tabs")
     assertEqual(defaultLayout.panels(in: .right).count, 5, "Five right dock tabs")
 
@@ -1447,6 +1447,162 @@ do {
     let reload = WorkspaceStateStore(customStorageURL: url)
     assertEqual(reload.getWorkbenchLayout(workspacePath: "/tmp/workspace-a").activeRightTab, .tickets, "Panel placement and selection survive reload")
     assertEqual(reload.getWorkbenchLayout(workspacePath: "/tmp/workspace-b").activeRightTab, .changes, "Workspace layout remains independent")
+}
+
+// Test 29: End-to-End Repository Workflow and Secondary Actions (Milestone 3)
+print("Test 29: End-to-End Repository Workflow and Secondary Actions (Milestone 3)")
+do {
+    // 1. Remote Web URL Parsing
+    let sshURL = GitService.parseRemoteWebURL("git@github.com:marcelodevops/miniOps.git")
+    assertEqual(sshURL?.absoluteString, "https://github.com/marcelodevops/miniOps", "git@ SSH remote parses to HTTPS URL")
+
+    let httpsURL = GitService.parseRemoteWebURL("https://github.com/marcelodevops/miniOps.git")
+    assertEqual(httpsURL?.absoluteString, "https://github.com/marcelodevops/miniOps", "HTTPS remote parses and strips .git")
+
+    let gitlabURL = GitService.parseRemoteWebURL("ssh://git@gitlab.com/company/project.git")
+    assertEqual(gitlabURL?.absoluteString, "https://gitlab.com/company/project", "ssh:// remote parses to HTTPS web URL")
+
+    assert(GitService.parseRemoteWebURL("   ") == nil, "Empty remote URL returns nil")
+
+    // 2. ExternalEditor Resolution and Fallbacks
+    let vsCodeURL = URL(fileURLWithPath: "/Applications/Visual Studio Code.app")
+    let zedURL = URL(fileURLWithPath: "/Applications/Zed.app")
+
+    // When VS Code is detected:
+    let codeResult = ExternalEditor.preferredEditorURL(appFinder: { id in
+        id == "com.microsoft.VSCode" ? vsCodeURL : nil
+    })
+    assertEqual(codeResult?.bundleId, "com.microsoft.VSCode", "Detects VS Code when installed")
+    assertEqual(codeResult?.appURL, vsCodeURL, "Resolves VS Code application URL")
+
+    // When only Zed is detected:
+    let zedResult = ExternalEditor.preferredEditorURL(appFinder: { id in
+        id == "dev.zed.Zed" ? zedURL : nil
+    })
+    assertEqual(zedResult?.bundleId, "dev.zed.Zed", "Detects Zed when installed")
+    assertEqual(zedResult?.appURL, zedURL, "Resolves Zed application URL")
+
+    // When none detected:
+    let noneResult = ExternalEditor.preferredEditorURL(appFinder: { _ in nil })
+    assert(noneResult == nil, "Returns nil when no supported editor is installed")
+
+    // Test ExternalEditor.open dispatches to preferred editor or fallback
+    var openedWithApp = false
+    var openedWithDefault = false
+    ExternalEditor.open(
+        path: "/tmp/sample.txt",
+        appFinder: { id in id == "com.microsoft.VSCode" ? vsCodeURL : nil },
+        fileOpener: { urls, app in
+            openedWithApp = (app == vsCodeURL && urls.first?.path == "/tmp/sample.txt")
+            return true
+        },
+        defaultOpener: { _ in
+            openedWithDefault = true
+            return true
+        }
+    )
+    assert(openedWithApp, "ExternalEditor.open opens file with detected editor")
+    assert(!openedWithDefault, "Default opener not invoked when preferred editor succeeds")
+
+    openedWithApp = false
+    openedWithDefault = false
+    ExternalEditor.open(
+        path: "/tmp/sample.txt",
+        appFinder: { _ in nil },
+        fileOpener: { _, _ in
+            openedWithApp = true
+            return true
+        },
+        defaultOpener: { url in
+            openedWithDefault = (url.path == "/tmp/sample.txt")
+            return true
+        }
+    )
+    assert(!openedWithApp, "No app opener called when no preferred editor exists")
+    assert(openedWithDefault, "Falls back cleanly to system default opener")
+
+    // 3. Multi-repo switching with layout & commit selection restoration
+    let (tempDirA, repoURLA) = setupTempRepo()
+    let (tempDirB, repoURLB) = setupTempRepo()
+    defer {
+        try? FileManager.default.removeItem(at: tempDirA)
+        try? FileManager.default.removeItem(at: tempDirB)
+    }
+
+    // Set up files in Repo A
+    let stagedA = repoURLA.appendingPathComponent("staged_excluded.txt")
+    let targetA = repoURLA.appendingPathComponent("target.txt")
+    try! "staged excluded change".write(to: stagedA, atomically: true, encoding: .utf8)
+    try! "target change".write(to: targetA, atomically: true, encoding: .utf8)
+    _ = runGit(args: ["add", "staged_excluded.txt"], in: repoURLA.path)
+
+    // Set up files in Repo B
+    let fileB1 = repoURLB.appendingPathComponent("b1.txt")
+    let fileB2 = repoURLB.appendingPathComponent("b2.txt")
+    try! "b1 change".write(to: fileB1, atomically: true, encoding: .utf8)
+    try! "b2 change".write(to: fileB2, atomically: true, encoding: .utf8)
+
+    // Verify state store persists and restores repo states independently
+    let storeURL = tempDirA.appendingPathComponent("multi_repo_state.json")
+    let store = WorkspaceStateStore(customStorageURL: storeURL)
+
+    // User is in Repo A: selects target.txt for editing and only target.txt for commit (excluding staged_excluded.txt)
+    var repoAState = RepoLayoutState()
+    repoAState.selectedFilePath = targetA.path
+    repoAState.selectedFilesForCommit = ["target.txt"]
+    repoAState.terminalHeightRatio = 0.4
+    store.saveRepoState(repoPath: repoURLA.path, state: repoAState)
+
+    // User switches to Repo B: selects b1.txt for commit (excluding b2.txt)
+    var repoBState = RepoLayoutState()
+    repoBState.selectedFilePath = fileB1.path
+    repoBState.selectedFilesForCommit = ["b1.txt"]
+    repoBState.terminalHeightRatio = 0.6
+    store.saveRepoState(repoPath: repoURLB.path, state: repoBState)
+
+    // User switches back to Repo A:
+    let reloadedA = store.getRepoState(repoPath: repoURLA.path)
+    assertEqual(reloadedA.selectedFilePath, targetA.path, "Repo A restores selected file")
+    assertEqual(reloadedA.selectedFilesForCommit, ["target.txt"], "Repo A restores excluded commit selection")
+    assertEqual(reloadedA.terminalHeightRatio, 0.4, "Repo A restores terminal ratio")
+
+    // User switches back to Repo B:
+    let reloadedB = store.getRepoState(repoPath: repoURLB.path)
+    assertEqual(reloadedB.selectedFilePath, fileB1.path, "Repo B restores selected file")
+    assertEqual(reloadedB.selectedFilesForCommit, ["b1.txt"], "Repo B restores excluded commit selection")
+    assertEqual(reloadedB.terminalHeightRatio, 0.6, "Repo B restores terminal ratio")
+
+    // 4. Selective commit in Repo A preserves the excluded staged changes
+    let gitService = GitService.shared
+    let commitResult = gitService.selectiveCommit(
+        repoPath: repoURLA.path,
+        message: "Selectively commit target",
+        selectedPaths: ["target.txt"]
+    )
+    assert(commitResult.success, "Selective commit succeeded: \(commitResult.error ?? "")")
+
+    let committedA = runGit(args: ["show", "--pretty=", "--name-only", "HEAD"], in: repoURLA.path)
+    assert(committedA.contains("target.txt"), "Committed files must contain target.txt")
+    assert(!committedA.contains("staged_excluded.txt"), "Committed files must NOT contain staged_excluded.txt")
+
+    let statusA = runGit(args: ["status", "--porcelain"], in: repoURLA.path)
+    assert(statusA.contains("A  staged_excluded.txt"), "Excluded staged file remains staged in git index")
+
+    // 5. Diff output validation for Center Stage Diff Inspector
+    let diff = gitService.getDiff(repoPath: repoURLA.path, filePath: "staged_excluded.txt")
+    assert(!diff.isEmpty, "Diff output is generated for staged_excluded.txt")
+    assert(diff.contains("diff --git"), "Diff header is standard git format")
+    assert(diff.contains("+staged excluded change"), "Diff reflects staged additions")
+
+    // 6. JSON Backward Compatibility for RepoLayoutState
+    let legacyJSON = #"{"selectedFilePath":"/foo/bar.swift","expandedFolderPaths":[],"terminalHeightRatio":0.5,"isEditorCollapsed":false,"isTerminalCollapsed":false,"isGitInspectorOpen":false}"#
+    let decoded = try! JSONDecoder().decode(RepoLayoutState.self, from: legacyJSON.data(using: .utf8)!)
+    assertEqual(decoded.selectedFilePath, "/foo/bar.swift", "Decodes legacy RepoLayoutState without selectedFilesForCommit")
+    assert(decoded.selectedFilesForCommit == nil, "Missing selectedFilesForCommit key decodes as nil")
+
+    let encodedData = try! JSONEncoder().encode(repoAState)
+    let roundTrip = try! JSONDecoder().decode(RepoLayoutState.self, from: encodedData)
+    assertEqual(roundTrip.selectedFilesForCommit, ["target.txt"], "Round-trip JSON encodes and decodes selectedFilesForCommit")
 }
 
 print("==================================================")

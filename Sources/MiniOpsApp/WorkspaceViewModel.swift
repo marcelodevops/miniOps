@@ -23,6 +23,7 @@ public final class WorkspaceViewModel: ObservableObject {
 
     // Git changes state
     @Published public var selectedFilesForCommit: Set<String> = []
+    @Published public var activeDiffFile: String? = nil
     @Published public var activeAgents: [AgentInfo] = []
     @Published public var tickets: [TicketInfo] = []
     @Published public var isSyncingTickets: Bool = false
@@ -170,8 +171,21 @@ public final class WorkspaceViewModel: ObservableObject {
             isEditorModified = false
         }
 
-        // Pre-select all modified files for commit by default
-        selectedFilesForCommit = Set(repo.changedFiles.map { $0.path })
+        // Restore commit file selection: preserve excluded files if user previously customized selection
+        let currentChanged = Set(repo.changedFiles.map { $0.path })
+        if let savedSelection = state.selectedFilesForCommit {
+            self.selectedFilesForCommit = savedSelection.intersection(currentChanged)
+        } else {
+            self.selectedFilesForCommit = currentChanged
+        }
+
+        // Restore or default active diff file
+        if let active = activeDiffFile, !currentChanged.contains(active) {
+            activeDiffFile = repo.changedFiles.first?.path
+        } else if activeDiffFile == nil {
+            activeDiffFile = repo.changedFiles.first?.path
+        }
+
         refreshGraph()
         refreshTickets()
     }
@@ -224,6 +238,7 @@ public final class WorkspaceViewModel: ObservableObject {
         state.isEditorCollapsed = isEditorCollapsed
         state.isTerminalCollapsed = isTerminalCollapsed
         state.isGitInspectorOpen = isGitInspectorOpen
+        state.selectedFilesForCommit = selectedFilesForCommit
         stateStore.saveRepoState(repoPath: repo.path, state: state)
     }
 
@@ -276,7 +291,17 @@ public final class WorkspaceViewModel: ObservableObject {
                                    branch: branch, isDirty: isDirty, ahead: ahead, behind: behind, changedFiles: changes)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                if self.selectedRepo?.path == repo.path { self.selectedRepo = updated }
+                if self.selectedRepo?.path == repo.path {
+                    self.selectedRepo = updated
+                    let changedPaths = Set(changes.map { $0.path })
+                    self.selectedFilesForCommit = self.selectedFilesForCommit.intersection(changedPaths)
+                    if let active = self.activeDiffFile, !changedPaths.contains(active) {
+                        self.activeDiffFile = changes.first?.path
+                    } else if self.activeDiffFile == nil {
+                        self.activeDiffFile = changes.first?.path
+                    }
+                    self.saveCurrentRepoLayout()
+                }
                 if let idx = self.repositories.firstIndex(where: { $0.path == repo.path }) {
                     self.repositories[idx] = updated
                 }
@@ -553,5 +578,44 @@ public final class WorkspaceViewModel: ObservableObject {
             }
         }
         return true
+    }
+
+    // MARK: - Center Diff Inspector
+    public func inspectDiff(filePath: String) {
+        self.activeDiffFile = filePath
+        selectCenterTab(.diff)
+    }
+
+    // MARK: - Secondary Actions
+    public func openInExternalEditor(path: String) {
+        let targetPath = (path as NSString).isAbsolutePath ? path : (selectedRepo?.path ?? workspacePath) + "/" + path
+        _ = ExternalEditor.open(path: targetPath)
+    }
+
+    public func revealInFinder(path: String) {
+        let targetPath = (path as NSString).isAbsolutePath ? path : (selectedRepo?.path ?? workspacePath) + "/" + path
+        NSWorkspace.shared.selectFile(targetPath, inFileViewerRootedAtPath: selectedRepo?.path ?? workspacePath)
+    }
+
+    public func copyPathToClipboard(_ path: String, relative: Bool = false) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if relative, let repo = selectedRepo, path.hasPrefix(repo.path) {
+            let rel = String(path.dropFirst(repo.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            pasteboard.setString(rel, forType: .string)
+        } else {
+            pasteboard.setString(path, forType: .string)
+        }
+    }
+
+    public func openRemoteInBrowser(repo: RepoInfo) {
+        if let url = gitService.getRemoteWebURL(repoPath: repo.path) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    public func openTerminalForRepo(_ repo: RepoInfo) {
+        selectRepo(repo)
+        workbenchLayout.isBottomDockCollapsed = false
     }
 }

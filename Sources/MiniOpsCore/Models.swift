@@ -74,6 +74,7 @@ public struct RepoLayoutState: Codable, Hashable, Sendable {
     public var isEditorCollapsed: Bool
     public var isTerminalCollapsed: Bool
     public var isGitInspectorOpen: Bool
+    public var selectedFilesForCommit: Set<String>?
 
     public init(
         selectedFilePath: String? = nil,
@@ -81,7 +82,8 @@ public struct RepoLayoutState: Codable, Hashable, Sendable {
         terminalHeightRatio: Double = 0.5,
         isEditorCollapsed: Bool = false,
         isTerminalCollapsed: Bool = false,
-        isGitInspectorOpen: Bool = false
+        isGitInspectorOpen: Bool = false,
+        selectedFilesForCommit: Set<String>? = nil
     ) {
         self.selectedFilePath = selectedFilePath
         self.expandedFolderPaths = expandedFolderPaths
@@ -89,11 +91,34 @@ public struct RepoLayoutState: Codable, Hashable, Sendable {
         self.isEditorCollapsed = isEditorCollapsed
         self.isTerminalCollapsed = isTerminalCollapsed
         self.isGitInspectorOpen = isGitInspectorOpen
+        self.selectedFilesForCommit = selectedFilesForCommit
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case selectedFilePath
+        case expandedFolderPaths
+        case terminalHeightRatio
+        case isEditorCollapsed
+        case isTerminalCollapsed
+        case isGitInspectorOpen
+        case selectedFilesForCommit
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.selectedFilePath = try container.decodeIfPresent(String.self, forKey: .selectedFilePath)
+        self.expandedFolderPaths = try container.decodeIfPresent(Set<String>.self, forKey: .expandedFolderPaths) ?? []
+        self.terminalHeightRatio = try container.decodeIfPresent(Double.self, forKey: .terminalHeightRatio) ?? 0.5
+        self.isEditorCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isEditorCollapsed) ?? false
+        self.isTerminalCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isTerminalCollapsed) ?? false
+        self.isGitInspectorOpen = try container.decodeIfPresent(Bool.self, forKey: .isGitInspectorOpen) ?? false
+        self.selectedFilesForCommit = try container.decodeIfPresent(Set<String>.self, forKey: .selectedFilesForCommit)
     }
 }
 
 public enum CenterTab: String, Codable, CaseIterable, Sendable {
     case editor = "Editor"
+    case diff = "Diff"
     case overview = "Overview"
     case focus = "Focus"
     case graph = "Graph"

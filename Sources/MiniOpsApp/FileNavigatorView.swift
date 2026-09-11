@@ -7,19 +7,28 @@ public struct FileNavigatorView: View {
     public let selectedFilePath: String?
     @Binding public var expandedFolderPaths: Set<String>
     public let onSelectFile: (String) -> Void
+    public var onOpenInExternalEditor: ((String) -> Void)?
+    public var onRevealInFinder: ((String) -> Void)?
+    public var onCopyPath: ((String, Bool) -> Void)?
 
     public init(
         repoPath: String,
         rootNode: FileNode,
         selectedFilePath: String?,
         expandedFolderPaths: Binding<Set<String>>,
-        onSelectFile: @escaping (String) -> Void
+        onSelectFile: @escaping (String) -> Void,
+        onOpenInExternalEditor: ((String) -> Void)? = nil,
+        onRevealInFinder: ((String) -> Void)? = nil,
+        onCopyPath: ((String, Bool) -> Void)? = nil
     ) {
         self.repoPath = repoPath
         self.rootNode = rootNode
         self.selectedFilePath = selectedFilePath
         self._expandedFolderPaths = expandedFolderPaths
         self.onSelectFile = onSelectFile
+        self.onOpenInExternalEditor = onOpenInExternalEditor
+        self.onRevealInFinder = onRevealInFinder
+        self.onCopyPath = onCopyPath
     }
 
     public var body: some View {
@@ -29,9 +38,13 @@ public struct FileNavigatorView: View {
                     FileNodeRow(
                         node: child,
                         depth: 0,
+                        repoPath: repoPath,
                         selectedFilePath: selectedFilePath,
                         expandedFolderPaths: $expandedFolderPaths,
-                        onSelectFile: onSelectFile
+                        onSelectFile: onSelectFile,
+                        onOpenInExternalEditor: onOpenInExternalEditor,
+                        onRevealInFinder: onRevealInFinder,
+                        onCopyPath: onCopyPath
                     )
                 }
             }
@@ -43,9 +56,13 @@ public struct FileNavigatorView: View {
 private struct FileNodeRow: View {
     let node: FileNode
     let depth: Int
+    let repoPath: String
     let selectedFilePath: String?
     @Binding var expandedFolderPaths: Set<String>
     let onSelectFile: (String) -> Void
+    var onOpenInExternalEditor: ((String) -> Void)? = nil
+    var onRevealInFinder: ((String) -> Void)? = nil
+    var onCopyPath: ((String, Bool) -> Void)? = nil
 
     var isExpanded: Bool {
         expandedFolderPaths.contains(node.path)
@@ -107,6 +124,54 @@ private struct FileNodeRow: View {
                     onSelectFile(node.path)
                 }
             }
+            .contextMenu {
+                Button {
+                    if let onOpenInExternalEditor {
+                        onOpenInExternalEditor(node.path)
+                    } else {
+                        _ = ExternalEditor.open(path: node.path)
+                    }
+                } label: {
+                    Label("Open in External Editor", systemImage: "arrow.up.forward.app")
+                }
+
+                Button {
+                    if let onRevealInFinder {
+                        onRevealInFinder(node.path)
+                    } else {
+                        NSWorkspace.shared.selectFile(node.path, inFileViewerRootedAtPath: repoPath)
+                    }
+                } label: {
+                    Label("Reveal in Finder", systemImage: "folder")
+                }
+
+                Divider()
+
+                Button {
+                    if let onCopyPath {
+                        onCopyPath(node.path, false)
+                    } else {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(node.path, forType: .string)
+                    }
+                } label: {
+                    Label("Copy Path", systemImage: "doc.on.doc")
+                }
+
+                if node.path.hasPrefix(repoPath) {
+                    Button {
+                        let rel = String(node.path.dropFirst(repoPath.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                        if let onCopyPath {
+                            onCopyPath(node.path, true)
+                        } else {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(rel, forType: .string)
+                        }
+                    } label: {
+                        Label("Copy Relative Path", systemImage: "doc.on.clipboard")
+                    }
+                }
+            }
 
             // Children if expanded
             if node.isDirectory && isExpanded, let children = node.children {
@@ -114,9 +179,13 @@ private struct FileNodeRow: View {
                     FileNodeRow(
                         node: child,
                         depth: depth + 1,
+                        repoPath: repoPath,
                         selectedFilePath: selectedFilePath,
                         expandedFolderPaths: $expandedFolderPaths,
-                        onSelectFile: onSelectFile
+                        onSelectFile: onSelectFile,
+                        onOpenInExternalEditor: onOpenInExternalEditor,
+                        onRevealInFinder: onRevealInFinder,
+                        onCopyPath: onCopyPath
                     )
                 }
             }

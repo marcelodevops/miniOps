@@ -107,15 +107,30 @@ public final class GitService: @unchecked Sendable {
             return "(Untracked file cannot be read as text)"
         }
 
-        var args = ["--literal-pathspecs", "diff"]
         if cached {
-            args.append("--cached")
+            let res = runGit(args: ["--literal-pathspecs", "diff", "--cached", "--", filePath], in: repoPath)
+            return res.stdout.isEmpty ? (res.stderr.isEmpty ? "No differences" : res.stderr) : res.stdout
         }
-        args.append("--")
-        args.append(filePath)
 
-        let diffRes = runGit(args: args, in: repoPath)
-        return diffRes.stdout.isEmpty ? (diffRes.stderr.isEmpty ? "No differences" : diffRes.stderr) : diffRes.stdout
+        // 1. Try diffing against HEAD (captures both staged and unstaged modifications)
+        let headRes = runGit(args: ["--literal-pathspecs", "diff", "HEAD", "--", filePath], in: repoPath)
+        if headRes.status == 0 && !headRes.stdout.isEmpty {
+            return headRes.stdout
+        }
+
+        // 2. Try unstaged diff (e.g. if HEAD does not exist yet)
+        let unstagedRes = runGit(args: ["--literal-pathspecs", "diff", "--", filePath], in: repoPath)
+        if !unstagedRes.stdout.isEmpty {
+            return unstagedRes.stdout
+        }
+
+        // 3. Try staged diff (e.g. if staged in an initial repository before first commit)
+        let cachedRes = runGit(args: ["--literal-pathspecs", "diff", "--cached", "--", filePath], in: repoPath)
+        if !cachedRes.stdout.isEmpty {
+            return cachedRes.stdout
+        }
+
+        return "No differences"
     }
 
     public func validatePaths(repoPath: String, paths: [String]) throws -> [String] {
@@ -622,4 +637,55 @@ extension GitService {
         }
         return BatchGitResult(action: action, results: results)
     }
+
+    public func getRemoteURL(repoPath: String) -> String? {
+        let res = runGit(args: ["config", "--get", "remote.origin.url"], in: repoPath)
+        guard res.status == 0 else { return nil }
+        let url = res.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return url.isEmpty ? nil : url
+    }
+
+    public static func parseRemoteWebURL(_ raw: String) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // git@github.com:owner/repo.git or git@gitlab.com:owner/repo.git
+        if trimmed.hasPrefix("git@") {
+            let withoutPrefix = trimmed.dropFirst(4)
+            let parts = withoutPrefix.split(separator: ":", maxSplits: 1)
+            if parts.count == 2 {
+                let host = parts[0]
+                var path = String(parts[1])
+                if path.hasSuffix(".git") { path.removeLast(4) }
+                return URL(string: "https://\(host)/\(path)")
+            }
+        }
+
+        // ssh://git@github.com/owner/repo.git
+        if trimmed.hasPrefix("ssh://git@") {
+            let withoutPrefix = trimmed.dropFirst(10)
+            let parts = withoutPrefix.split(separator: "/", maxSplits: 1)
+            if parts.count == 2 {
+                let host = parts[0]
+                var path = String(parts[1])
+                if path.hasSuffix(".git") { path.removeLast(4) }
+                return URL(string: "https://\(host)/\(path)")
+            }
+        }
+
+        // https://github.com/owner/repo.git or http://...
+        if trimmed.hasPrefix("https://") || trimmed.hasPrefix("http://") {
+            var urlStr = trimmed
+            if urlStr.hasSuffix(".git") { urlStr.removeLast(4) }
+            return URL(string: urlStr)
+        }
+
+        return nil
+    }
+
+    public func getRemoteWebURL(repoPath: String) -> URL? {
+        guard let raw = getRemoteURL(repoPath: repoPath) else { return nil }
+        return Self.parseRemoteWebURL(raw)
+    }
 }
+

@@ -402,6 +402,15 @@ public struct MainWindowView: View {
                         },
                         onAddToHerdr: { repo in
                             viewModel.addRepoToHerdr(repo)
+                        },
+                        onOpenTerminal: { repo in
+                            viewModel.openTerminalForRepo(repo)
+                        },
+                        onOpenInExternalEditor: { repo in
+                            viewModel.openInExternalEditor(path: repo.path)
+                        },
+                        onOpenRemote: { repo in
+                            viewModel.openRemoteInBrowser(repo: repo)
                         }
                     )
                     .frame(maxHeight: .infinity)
@@ -433,6 +442,18 @@ public struct MainWindowView: View {
                         selectedFilesForCommit: $viewModel.selectedFilesForCommit,
                         onGitOperationDone: {
                             viewModel.refreshCurrentRepoStatus()
+                        },
+                        onOpenStashes: {
+                            viewModel.showPanel(.stashes)
+                        },
+                        onOpenWorktrees: {
+                            viewModel.showPanel(.worktrees)
+                        },
+                        onOpenBatchGit: {
+                            isShowingBatchGitSheet = true
+                        },
+                        onInspectDiffInCenter: { file in
+                            viewModel.inspectDiff(filePath: file)
                         }
                     )
                 } else {
@@ -515,6 +536,8 @@ public struct MainWindowView: View {
         switch viewModel.workbenchLayout.activeCenterTab {
         case .editor:
             editorStageContent
+        case .diff:
+            CenterDiffStageView(viewModel: viewModel)
         case .overview:
             OverviewDashboardView(viewModel: viewModel)
         case .focus:

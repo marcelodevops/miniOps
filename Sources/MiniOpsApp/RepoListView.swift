@@ -11,6 +11,9 @@ public struct RepoListView: View {
     public let onSelectFile: (String) -> Void
     public var onHideRepo: ((RepoInfo) -> Void)?
     public var onAddToHerdr: ((RepoInfo) -> Void)?
+    public var onOpenTerminal: ((RepoInfo) -> Void)?
+    public var onOpenInExternalEditor: ((RepoInfo) -> Void)?
+    public var onOpenRemote: ((RepoInfo) -> Void)?
 
     public init(
         repos: [RepoInfo],
@@ -21,7 +24,10 @@ public struct RepoListView: View {
         onSelectRepo: @escaping (RepoInfo) -> Void,
         onSelectFile: @escaping (String) -> Void,
         onHideRepo: ((RepoInfo) -> Void)? = nil,
-        onAddToHerdr: ((RepoInfo) -> Void)? = nil
+        onAddToHerdr: ((RepoInfo) -> Void)? = nil,
+        onOpenTerminal: ((RepoInfo) -> Void)? = nil,
+        onOpenInExternalEditor: ((RepoInfo) -> Void)? = nil,
+        onOpenRemote: ((RepoInfo) -> Void)? = nil
     ) {
         self.repos = repos
         self.selectedRepoPath = selectedRepoPath
@@ -32,6 +38,9 @@ public struct RepoListView: View {
         self.onSelectFile = onSelectFile
         self.onHideRepo = onHideRepo
         self.onAddToHerdr = onAddToHerdr
+        self.onOpenTerminal = onOpenTerminal
+        self.onOpenInExternalEditor = onOpenInExternalEditor
+        self.onOpenRemote = onOpenRemote
     }
 
     public var body: some View {
@@ -69,7 +78,10 @@ public struct RepoListView: View {
                 repo: repo,
                 isSelected: repo.path == selectedRepoPath,
                 onHideRepo: onHideRepo,
-                onAddToHerdr: onAddToHerdr
+                onAddToHerdr: onAddToHerdr,
+                onOpenTerminal: onOpenTerminal,
+                onOpenInExternalEditor: onOpenInExternalEditor,
+                onOpenRemote: onOpenRemote
             )
             .contentShape(Rectangle())
             .onTapGesture {
@@ -97,6 +109,9 @@ private struct RepoRow: View {
     let isSelected: Bool
     var onHideRepo: ((RepoInfo) -> Void)? = nil
     var onAddToHerdr: ((RepoInfo) -> Void)? = nil
+    var onOpenTerminal: ((RepoInfo) -> Void)? = nil
+    var onOpenInExternalEditor: ((RepoInfo) -> Void)? = nil
+    var onOpenRemote: ((RepoInfo) -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 8) {
@@ -161,6 +176,38 @@ private struct RepoRow: View {
                 .fill(isSelected ? Color.accentColor : Color.clear)
         )
         .contextMenu {
+            Button {
+                if let onOpenTerminal {
+                    onOpenTerminal(repo)
+                }
+            } label: {
+                Label("Open in Terminal", systemImage: "terminal")
+            }
+
+            Button {
+                if let onOpenInExternalEditor {
+                    onOpenInExternalEditor(repo)
+                } else {
+                    _ = ExternalEditor.open(path: repo.path)
+                }
+            } label: {
+                Label("Open in External Editor", systemImage: "arrow.up.forward.app")
+            }
+
+            if let remoteURL = GitService.shared.getRemoteWebURL(repoPath: repo.path) {
+                Button {
+                    if let onOpenRemote {
+                        onOpenRemote(repo)
+                    } else {
+                        NSWorkspace.shared.open(remoteURL)
+                    }
+                } label: {
+                    Label("Open Remote in Browser", systemImage: "safari")
+                }
+            }
+
+            Divider()
+
             Button {
                 onAddToHerdr?(repo)
             } label: {
