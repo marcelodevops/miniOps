@@ -179,19 +179,25 @@ public struct MainWindowView: View {
                         VStack(spacing: 0) {
                             // Inspector tab header
                             HStack(spacing: 8) {
-                                Picker("", selection: $activeInspectorTab) {
-                                    Text("Changes (\(repo.changedFiles.count))").tag(InspectorTab.changes)
-                                    Text("Stashes").tag(InspectorTab.stashes)
-                                    Text("Worktrees").tag(InspectorTab.worktrees)
-                                    Text("Notes").tag(InspectorTab.notes)
-                                    Text("Agents (\(viewModel.activeAgents.count))").tag(InspectorTab.agents)
-                                    Text("Tickets (\(viewModel.tickets.count))").tag(InspectorTab.tickets)
-                                    Text("Graph").tag(InspectorTab.graph)
+                                // Seven segments exceed any fixed cap: a hard maxWidth
+                                // made NSSegmentedControl overflow and clip "Changes".
+                                // Scroll horizontally instead so every tab stays reachable.
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    Picker("", selection: $activeInspectorTab) {
+                                        Text("Changes (\(repo.changedFiles.count))").tag(InspectorTab.changes)
+                                        Text("Stashes").tag(InspectorTab.stashes)
+                                        Text("Worktrees").tag(InspectorTab.worktrees)
+                                        Text("Notes").tag(InspectorTab.notes)
+                                        Text("Agents (\(viewModel.activeAgents.count))").tag(InspectorTab.agents)
+                                        Text("Tickets (\(viewModel.tickets.count))").tag(InspectorTab.tickets)
+                                        Text("Graph").tag(InspectorTab.graph)
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .fixedSize()
+                                    .padding(.vertical, 1)
                                 }
-                                .pickerStyle(.segmented)
-                                .frame(maxWidth: 420)
-
-                                Spacer()
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
 
                                 Button(action: {
                                     withAnimation {
