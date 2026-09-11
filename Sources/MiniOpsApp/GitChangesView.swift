@@ -12,6 +12,11 @@ public struct GitChangesView: View {
     @State private var isCommitting: Bool = false
     @State private var operationMessage: String?
     @State private var isErrorMessage: Bool = false
+    @State private var listRatio: CGFloat = 0.3
+    @State private var isDraggingDivider: Bool = false
+
+    private static let dividerWidth: CGFloat = 1
+    private static let splitSpace = "gitChangesSplit"
 
     public let onGitOperationDone: () -> Void
 
@@ -28,9 +33,77 @@ public struct GitChangesView: View {
     }
 
     public var body: some View {
-        HSplitView {
-            // Left list: Changed files with selection checkboxes
-            VStack(alignment: .leading, spacing: 0) {
+        // A proportional split instead of HSplitView: NSSplitView keeps absolute
+        // divider positions, so toggling the NavigationSplitView sidebar left the
+        // file list stranded under it. Recomputing from the live container width
+        // keeps both panes inside the detail pane at every width.
+        GeometryReader { geometry in
+            let layout = SplitPaneLayout.resolve(
+                totalWidth: geometry.size.width,
+                ratio: listRatio,
+                dividerWidth: Self.dividerWidth
+            )
+
+            HStack(spacing: 0) {
+                fileListPane
+                    .frame(width: layout.leadingWidth)
+                    .clipped()
+
+                divider(totalWidth: geometry.size.width)
+
+                diffPane
+                    .frame(width: layout.trailingWidth)
+                    .clipped()
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
+            .coordinateSpace(name: Self.splitSpace)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .onAppear {
+            if let first = changes.first {
+                loadDiff(for: first.path)
+            }
+        }
+    }
+
+    private func divider(totalWidth: CGFloat) -> some View {
+        Rectangle()
+            .fill(isDraggingDivider ? Color.accentColor : Color(NSColor.separatorColor))
+            .frame(width: Self.dividerWidth)
+            .overlay(
+                // Thin dividers are hard to grab, so widen only the hit area.
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+            )
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .named(Self.splitSpace))
+                    .onChanged { value in
+                        isDraggingDivider = true
+                        listRatio = SplitPaneLayout.ratio(
+                            forLeadingWidth: value.location.x,
+                            totalWidth: totalWidth,
+                            dividerWidth: Self.dividerWidth
+                        )
+                    }
+                    .onEnded { _ in
+                        isDraggingDivider = false
+                    }
+            )
+    }
+
+    private var fileListPane: some View {
+        // Left list: Changed files with selection checkboxes
+        VStack(alignment: .leading, spacing: 0) {
                 // Header
                 HStack {
                     Text("Git Changes (\(changes.count))")
@@ -164,10 +237,12 @@ public struct GitChangesView: View {
                 .padding(10)
                 .background(Color(NSColor.windowBackgroundColor))
             }
-            .frame(minWidth: 200, idealWidth: 300, maxWidth: 450)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
 
-            // Right Pane: One file's diff viewer at a time
-            VStack(alignment: .leading, spacing: 0) {
+    private var diffPane: some View {
+        // Right Pane: One file's diff viewer at a time
+        VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     Image(systemName: "arrow.left.arrow.right")
                         .foregroundColor(.accentColor)
@@ -212,15 +287,7 @@ public struct GitChangesView: View {
                     .background(Color(NSColor.textBackgroundColor))
                 }
             }
-            .frame(minWidth: 220, maxWidth: .infinity)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipped()
-        .onAppear {
-            if let first = changes.first {
-                loadDiff(for: first.path)
-            }
-        }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     private func loadDiff(for path: String) {
