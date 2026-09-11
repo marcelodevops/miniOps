@@ -1941,8 +1941,30 @@ do {
     }
 }
 
+// Test 32: Process Runner Does Not Re-enter the Main Run Loop
+print("Test 32: Process Runner Does Not Re-enter the Main Run Loop")
+do {
+    assert(Thread.isMainThread, "The regression probe must run on the main thread")
+
+    var mainRunLoopReentered = false
+    let timer = Timer(timeInterval: 0.01, repeats: false) { _ in
+        mainRunLoopReentered = true
+    }
+    RunLoop.main.add(timer, forMode: .default)
+
+    let result = ProcessRunner.run(
+        executable: "/bin/sh",
+        arguments: ["-c", "sleep 0.1"],
+        currentDirectory: NSTemporaryDirectory(),
+        timeout: 1
+    )
+    timer.invalidate()
+
+    assertEqual(result.status, 0, "The probe subprocess should exit successfully")
+    assert(!mainRunLoopReentered, "Waiting for a subprocess must not pump the main run loop during a SwiftUI transaction")
+}
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")
 if failedCount > 0 { exit(1) }
-
