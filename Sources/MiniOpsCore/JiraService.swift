@@ -272,10 +272,10 @@ public final class JiraService: @unchecked Sendable {
         do {
             let tickets = try await fetchTickets(baseURL: cleanBase, email: email, token: token)
             saveCache(tickets: tickets, baseURL: cleanBase, workspacePath: workspacePath)
-            WorkspaceStateStore.shared.recordJiraSyncResult(date: Date(), error: nil)
+            WorkspaceStateStore.shared.recordJiraSyncResult(workspacePath: workspacePath, date: Date(), error: nil)
             return JiraSyncResult(success: true, ticketCount: tickets.count)
         } catch {
-            WorkspaceStateStore.shared.recordJiraSyncResult(date: Date(), error: error.localizedDescription)
+            WorkspaceStateStore.shared.recordJiraSyncResult(workspacePath: workspacePath, date: Date(), error: error.localizedDescription)
             return JiraSyncResult(success: false, error: error.localizedDescription)
         }
     }

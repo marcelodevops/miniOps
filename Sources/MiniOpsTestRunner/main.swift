@@ -2485,13 +2485,35 @@ do {
         assertEqual(viewModel.ticketFreshnessLabel, nil, "No freshness label before any sync has happened")
         assertEqual(viewModel.isTicketDataStale, false, "Not stale before any sync has happened")
 
-        store.recordJiraSyncResult(date: Date(), error: nil)
+        store.recordJiraSyncResult(workspacePath: viewModel.workspacePath, date: Date(), error: nil)
         assert(viewModel.ticketFreshnessLabel?.hasPrefix("Synced") == true, "Successful sync produces a persistent 'Synced' label")
         assertEqual(viewModel.isTicketDataStale, false, "Successful sync is not marked stale")
 
-        store.recordJiraSyncResult(date: Date(), error: "Jira authentication rejected")
+        store.recordJiraSyncResult(workspacePath: viewModel.workspacePath, date: Date(), error: "Jira authentication rejected")
         assert(viewModel.ticketFreshnessLabel?.contains("Sync failed") == true, "Failed sync produces a persistent 'Sync failed' label")
         assertEqual(viewModel.isTicketDataStale, true, "Failed sync marks ticket data stale")
+
+        // Freshness is scoped per workspace: syncing workspace A must not leak its
+        // freshness/error state into workspace B.
+        let workspaceA = tempDir.appendingPathComponent("workspace-a").path
+        let workspaceB = tempDir.appendingPathComponent("workspace-b").path
+        try! FileManager.default.createDirectory(atPath: workspaceA, withIntermediateDirectories: true)
+        try! FileManager.default.createDirectory(atPath: workspaceB, withIntermediateDirectories: true)
+
+        viewModel.setWorkspace(path: workspaceA)
+        store.recordJiraSyncResult(workspacePath: workspaceA, date: Date(), error: "Jira authentication rejected")
+        assert(viewModel.ticketFreshnessLabel?.contains("Sync failed") == true, "Workspace A shows its own failed-sync freshness")
+        assertEqual(viewModel.isTicketDataStale, true, "Workspace A is marked stale after its own failed sync")
+
+        viewModel.setWorkspace(path: workspaceB)
+        assertEqual(viewModel.ticketFreshnessLabel, nil, "Workspace B has no freshness label; it never synced and must not inherit workspace A's state")
+        assertEqual(viewModel.isTicketDataStale, false, "Workspace B is not stale; it must not inherit workspace A's sync error")
+
+        store.recordJiraSyncResult(workspacePath: workspaceB, date: Date(), error: nil)
+        assert(viewModel.ticketFreshnessLabel?.hasPrefix("Synced") == true, "Workspace B shows its own successful-sync freshness")
+
+        viewModel.setWorkspace(path: workspaceA)
+        assert(viewModel.ticketFreshnessLabel?.contains("Sync failed") == true, "Switching back to workspace A still shows its own failed-sync freshness, unaffected by workspace B's later successful sync")
     }
 
     // Related repos: a repo whose branch contains the ticket key surfaces as related,

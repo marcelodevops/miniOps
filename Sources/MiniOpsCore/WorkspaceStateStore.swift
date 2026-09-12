@@ -6,25 +6,17 @@ public struct IntegrationSettings: Codable, Equatable {
     public var githubUsername: String
     /// When enabled the embedded terminal attaches a Herdr session instead of a plain login shell.
     public var herdrModeEnabled: Bool
-    /// When the last Jira ticket sync completed, successfully or not. Lets the UI show a
-    /// persistent "last synced"/"stale" indicator instead of only a transient status message.
-    public var lastJiraSyncDate: Date?
-    public var lastJiraSyncError: String?
 
     public init(
         jiraBaseURL: String = "",
         jiraEmail: String = "",
         githubUsername: String = "",
-        herdrModeEnabled: Bool = false,
-        lastJiraSyncDate: Date? = nil,
-        lastJiraSyncError: String? = nil
+        herdrModeEnabled: Bool = false
     ) {
         self.jiraBaseURL = jiraBaseURL
         self.jiraEmail = jiraEmail
         self.githubUsername = githubUsername
         self.herdrModeEnabled = herdrModeEnabled
-        self.lastJiraSyncDate = lastJiraSyncDate
-        self.lastJiraSyncError = lastJiraSyncError
     }
 
     enum CodingKeys: String, CodingKey {
@@ -32,8 +24,6 @@ public struct IntegrationSettings: Codable, Equatable {
         case jiraEmail
         case githubUsername
         case herdrModeEnabled
-        case lastJiraSyncDate
-        case lastJiraSyncError
     }
 
     public init(from decoder: Decoder) throws {
@@ -42,8 +32,19 @@ public struct IntegrationSettings: Codable, Equatable {
         self.jiraEmail = try container.decodeIfPresent(String.self, forKey: .jiraEmail) ?? ""
         self.githubUsername = try container.decodeIfPresent(String.self, forKey: .githubUsername) ?? ""
         self.herdrModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .herdrModeEnabled) ?? false
-        self.lastJiraSyncDate = try container.decodeIfPresent(Date.self, forKey: .lastJiraSyncDate)
-        self.lastJiraSyncError = try container.decodeIfPresent(String.self, forKey: .lastJiraSyncError)
+    }
+}
+
+/// When the last Jira ticket sync completed for a given workspace, successfully or not. Lets
+/// the UI show a persistent "last synced"/"stale" indicator instead of only a transient status
+/// message, scoped per workspace so syncing one workspace never overwrites another's freshness.
+public struct JiraSyncStatus: Codable, Equatable {
+    public var lastSyncDate: Date?
+    public var lastSyncError: String?
+
+    public init(lastSyncDate: Date? = nil, lastSyncError: String? = nil) {
+        self.lastSyncDate = lastSyncDate
+        self.lastSyncError = lastSyncError
     }
 }
 
@@ -56,6 +57,7 @@ public struct PersistedAppState: Codable {
     public var integrationSettings: IntegrationSettings
     public var workspaceLayouts: [String: WorkbenchLayoutState] = [:]
     public var workbenchLayout: WorkbenchLayoutState
+    public var jiraSyncStatuses: [String: JiraSyncStatus] = [:]
 
     public init(
         lastWorkspacePath: String? = nil,
@@ -84,6 +86,7 @@ public struct PersistedAppState: Codable {
         case integrationSettings
         case workspaceLayouts
         case workbenchLayout
+        case jiraSyncStatuses
     }
 
     public init(from decoder: Decoder) throws {
@@ -96,6 +99,7 @@ public struct PersistedAppState: Codable {
         self.integrationSettings = try container.decodeIfPresent(IntegrationSettings.self, forKey: .integrationSettings) ?? IntegrationSettings()
         self.workspaceLayouts = try container.decodeIfPresent([String: WorkbenchLayoutState].self, forKey: .workspaceLayouts) ?? [:]
         self.workbenchLayout = try container.decodeIfPresent(WorkbenchLayoutState.self, forKey: .workbenchLayout) ?? WorkbenchLayoutState()
+        self.jiraSyncStatuses = try container.decodeIfPresent([String: JiraSyncStatus].self, forKey: .jiraSyncStatuses) ?? [:]
     }
 }
 
@@ -216,11 +220,18 @@ public final class WorkspaceStateStore: @unchecked Sendable {
         }
     }
 
-    public func recordJiraSyncResult(date: Date, error: String?) {
+    public func recordJiraSyncResult(workspacePath: String, date: Date, error: String?) {
+        let stdPath = standardize(workspacePath)
         queue.sync {
-            cachedState.integrationSettings.lastJiraSyncDate = date
-            cachedState.integrationSettings.lastJiraSyncError = error
+            cachedState.jiraSyncStatuses[stdPath] = JiraSyncStatus(lastSyncDate: date, lastSyncError: error)
             persistToDisk()
+        }
+    }
+
+    public func getJiraSyncStatus(workspacePath: String) -> JiraSyncStatus {
+        let stdPath = standardize(workspacePath)
+        return queue.sync {
+            cachedState.jiraSyncStatuses[stdPath] ?? JiraSyncStatus()
         }
     }
 

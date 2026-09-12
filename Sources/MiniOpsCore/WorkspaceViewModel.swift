@@ -557,19 +557,19 @@ public final class WorkspaceViewModel: ObservableObject {
     /// Persistent freshness indicator for the Jira sync (survives relaunch, unlike the
     /// transient `ticketSyncStatus` flash message).
     public var ticketFreshnessLabel: String? {
-        let settings = stateStore.getIntegrationSettings()
-        guard let lastSync = settings.lastJiraSyncDate else { return nil }
+        let status = stateStore.getJiraSyncStatus(workspacePath: workspacePath)
+        guard let lastSync = status.lastSyncDate else { return nil }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         let relative = formatter.localizedString(for: lastSync, relativeTo: Date())
-        if let error = settings.lastJiraSyncError, !error.isEmpty {
+        if let error = status.lastSyncError, !error.isEmpty {
             return "Sync failed \(relative) — showing last synced tickets"
         }
         return "Synced \(relative)"
     }
 
     public var isTicketDataStale: Bool {
-        stateStore.getIntegrationSettings().lastJiraSyncError != nil
+        stateStore.getJiraSyncStatus(workspacePath: workspacePath).lastSyncError != nil
     }
 
     public func syncJiraTickets() {
