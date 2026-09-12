@@ -2432,6 +2432,78 @@ do {
     }
 }
 
+// Test 35: Ticket Metadata Parity (Type/Project/Labels/Dates), Related Repos, and Sync Freshness
+print("Test 35: Ticket Metadata Parity, Related Repos, and Sync Freshness")
+do {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // Jira date parsing accepts both the ISO8601-with-offset and legacy compact-offset shapes.
+    let parsedISO = JiraService.parseJiraDate("2024-05-01T10:15:00.000-07:00")
+    assert(parsedISO != nil, "ISO8601 offset date parses")
+    let parsedLegacy = JiraService.parseJiraDate("2024-05-01T10:15:00.000-0700")
+    assert(parsedLegacy != nil, "Legacy compact-offset date parses")
+    assertEqual(JiraService.parseJiraDate(nil), nil, "Nil date input yields nil")
+    assertEqual(JiraService.parseJiraDate(""), nil, "Empty date input yields nil")
+
+    // Cache round-trip carries type/project/labels/dates/url through TicketScanner.
+    let created = Date(timeIntervalSince1970: 1_700_000_000)
+    let updated = Date(timeIntervalSince1970: 1_700_500_000)
+    let rich = TicketInfo(
+        key: "OPS-9",
+        summary: "Rich metadata ticket",
+        status: "In Progress",
+        statusCategory: "in_progress",
+        priority: "High",
+        isOpen: true,
+        localPath: nil,
+        notes: "",
+        type: "Story",
+        project: "OPS",
+        labels: ["backend", "urgent"],
+        created: created,
+        updated: updated,
+        resolved: nil,
+        jiraURL: "https://example.atlassian.net/browse/OPS-9"
+    )
+    JiraService.shared.saveCache(tickets: [rich], baseURL: "https://example.atlassian.net", workspacePath: tempDir.path)
+    let scanned = TicketScanner.shared.scanTickets(workspacePath: tempDir.path)
+    let scannedRich = scanned.first(where: { $0.key == "OPS-9" })
+    assertEqual(scannedRich?.type, "Story", "Ticket type round-trips through the cache")
+    assertEqual(scannedRich?.project, "OPS", "Ticket project round-trips through the cache")
+    assertEqual(scannedRich?.labels, ["backend", "urgent"], "Ticket labels round-trip through the cache")
+    assertEqual(scannedRich?.jiraURL, "https://example.atlassian.net/browse/OPS-9", "Ticket Jira URL round-trips through the cache")
+    assert(scannedRich?.created != nil, "Ticket created date round-trips through the cache")
+    assert(scannedRich?.updated != nil, "Ticket updated date round-trips through the cache")
+
+    // Sync freshness is persisted per workspace and survives across ViewModel instances.
+    let storeURL = tempDir.appendingPathComponent("state.json")
+    let store = WorkspaceStateStore(customStorageURL: storeURL)
+    MainActor.assumeIsolated {
+        let viewModel = WorkspaceViewModel(stateStore: store)
+        assertEqual(viewModel.ticketFreshnessLabel, nil, "No freshness label before any sync has happened")
+        assertEqual(viewModel.isTicketDataStale, false, "Not stale before any sync has happened")
+
+        store.recordJiraSyncResult(date: Date(), error: nil)
+        assert(viewModel.ticketFreshnessLabel?.hasPrefix("Synced") == true, "Successful sync produces a persistent 'Synced' label")
+        assertEqual(viewModel.isTicketDataStale, false, "Successful sync is not marked stale")
+
+        store.recordJiraSyncResult(date: Date(), error: "Jira authentication rejected")
+        assert(viewModel.ticketFreshnessLabel?.contains("Sync failed") == true, "Failed sync produces a persistent 'Sync failed' label")
+        assertEqual(viewModel.isTicketDataStale, true, "Failed sync marks ticket data stale")
+    }
+
+    // Related repos: a repo whose branch contains the ticket key surfaces as related,
+    // mirroring the reference drawer's "Related repos" section.
+    let related = RepoInfo(name: "related-repo", path: "/tmp/related-repo", branch: "feat/OPS-9-rich-metadata", changedFiles: [])
+    let unrelated = RepoInfo(name: "other-repo", path: "/tmp/other-repo", branch: "main", changedFiles: [])
+    let repoAssociation = TicketScanner.shared.associatedRepository(for: rich, repositories: [unrelated, related])
+    assertEqual(repoAssociation?.path, related.path, "Ticket associates with the repo whose branch contains its key")
+}
+
+
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")

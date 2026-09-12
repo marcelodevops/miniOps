@@ -131,7 +131,7 @@ Candidate packaging, window-size checks, interactive runtime acceptance, daily-w
    - Tickets needing attention showing open tickets ranked by age (`daysOpen` descending, oldest first) with reference age badges (`>= 14d` critical red, `>= 5d` stale amber, `< 5d` fresh green), status, priority, and quick "Focus" action.
    - Agent attention queue showing waiting agents with direct terminal focus.
 9. Focus AI-ready context card (`FocusWorkView`) formatting ticket metadata, open duration (`Open: Xd`), associated repositories, and active agents with one-click copy to clipboard.
-10. Verified with 1,462 automated checks passing across 35 test suites, including Test 33 and Test 34 covering analytics, chart stats, tag/origin detection, record-level filter displays, and reference fixture comparison against myOps.
+10. Verified with 1,479 automated checks passing across 35 test suites (after merging with Milestone 5 ticket-parity work), including Test 33 and Test 34 covering analytics, chart stats, tag/origin detection, record-level filter displays, and reference fixture comparison against myOps.
 
 ### 5. Complete the remaining feature parity
 
@@ -142,6 +142,14 @@ Candidate packaging, window-size checks, interactive runtime acceptance, daily-w
 - Audit notes/settings compatibility before import. Preview mappings, preserve existing miniOps values on conflicts, back up destination state, and leave myOps data intact. Browser-local layout state may need an explicit export; do not assume it is in server data files. Handle credentials through supported Keychain/connection flows.
 
 **Gate:** all inventory items are verified equivalent or have a recorded product decision. Partial views do not count as feature parity.
+
+**Status:** Partial (2026-09-11, developed on branch `milestone-5` in parallel with Milestone 4 work on `main`; merged 2026-09-12):
+1. `TicketInfo` carries the reference metadata set (type, project, labels, created/updated/resolved, Jira URL). `JiraService` populates and round-trips these fields through `jira-cache.json`, including a `fetched_at` timestamp.
+2. Jira sync freshness/errors persist per workspace (`IntegrationSettings.lastJiraSyncDate/lastJiraSyncError`) and surface as a durable "Synced Xm ago" / "Sync failed" indicator in the ticket navigator, not just a 4-second flash.
+3. The Ticket Detail stage now shows type/project/labels/dates metadata cards and a "Related Repos" section (branch-name match), matches the reference drawer's Jira/local link behavior (a Jira-cache-only ticket no longer mislabels its link as "Open in Editor"), and displays the actual generated branch name.
+4. Test 35 covers date parsing, metadata round-trip, freshness/stale persistence, and related-repo association. Full suite after merging with Milestone 4: 1479 passed, 0 failed.
+
+**Remaining:** Agents (notifications, context usage), Graph (search, neighborhood focus, pan/zoom), Settings (workspace/ticket paths, connection verification, import audit) are not yet started.
 
 ### 6. Validate and transition
 

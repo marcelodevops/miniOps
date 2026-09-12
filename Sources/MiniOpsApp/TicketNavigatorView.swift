@@ -11,6 +11,8 @@ public struct TicketNavigatorView: View {
     public let selectedRepoPath: String?
     public var isSyncing: Bool = false
     public var syncStatus: String? = nil
+    public var freshnessLabel: String? = nil
+    public var isStale: Bool = false
     public let onSelectTicket: (TicketInfo) -> Void
     public let onCreateBranch: (TicketInfo) -> Void
     public let onRefresh: () -> Void
@@ -26,6 +28,8 @@ public struct TicketNavigatorView: View {
         openOnly: Binding<Bool>,
         isSyncing: Bool = false,
         syncStatus: String? = nil,
+        freshnessLabel: String? = nil,
+        isStale: Bool = false,
         onSelectTicket: @escaping (TicketInfo) -> Void,
         onCreateBranch: @escaping (TicketInfo) -> Void,
         onRefresh: @escaping () -> Void
@@ -36,6 +40,8 @@ public struct TicketNavigatorView: View {
         self._openOnly = openOnly
         self.isSyncing = isSyncing
         self.syncStatus = syncStatus
+        self.freshnessLabel = freshnessLabel
+        self.isStale = isStale
         self.onSelectTicket = onSelectTicket
         self.onCreateBranch = onCreateBranch
         self.onRefresh = onRefresh
@@ -51,12 +57,32 @@ public struct TicketNavigatorView: View {
 
             if isExpanded {
                 Divider()
+                if syncStatus == nil, let freshness = freshnessLabel {
+                    freshnessRow(freshness)
+                    Divider()
+                }
                 searchBar
                 Divider()
                 content
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func freshnessRow(_ label: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: isStale ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 9))
+                .foregroundColor(isStale ? .orange : .secondary)
+            Text(label)
+                .font(.system(size: 9))
+                .foregroundColor(isStale ? .orange : .secondary)
+                .lineLimit(1)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .help(isStale ? "Jira sync failed — showing the last successfully synced tickets" : "Jira tickets last synced \(label)")
     }
 
     private var header: some View {

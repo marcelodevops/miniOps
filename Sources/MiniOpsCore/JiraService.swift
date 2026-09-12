@@ -36,6 +36,15 @@ public final class JiraService: @unchecked Sendable {
         self.urlSession = urlSession
     }
 
+    /// Parses Jira's date strings. Delegates to `TicketScanner.parseDateString`, which
+    /// already handles ISO8601 (with/without fractional seconds), Jira's legacy
+    /// compact-offset format, and the plain "yyyy-MM-dd HH:mm:ss"/"yyyy-MM-dd" shapes
+    /// used by local ticket markdown files, so callers only need one date parser.
+    public static func parseJiraDate(_ raw: String?) -> Date? {
+        guard let raw, !raw.isEmpty else { return nil }
+        return TicketScanner.parseDateString(raw)
+    }
+
     public func normalizeBaseURL(_ rawURL: String) -> String {
         var base = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while base.hasSuffix("/") {
@@ -210,6 +219,12 @@ public final class JiraService: @unchecked Sendable {
                 let createdStr = f["created"] as? String
                 let createdDate = createdStr.flatMap { TicketScanner.parseDateString($0) }
 
+                let typeDict = f["issuetype"] as? [String: Any] ?? [:]
+                let typeName = typeDict["name"] as? String
+                let projectDict = f["project"] as? [String: Any] ?? [:]
+                let projectKey = (projectDict["key"] as? String) ?? (projectDict["name"] as? String)
+                let labelList = f["labels"] as? [String] ?? []
+
                 let ticket = TicketInfo(
                     key: key,
                     summary: summary,
@@ -219,7 +234,13 @@ public final class JiraService: @unchecked Sendable {
                     isOpen: isOpen,
                     localPath: nil,
                     notes: "",
-                    created: createdDate
+                    type: typeName,
+                    project: projectKey,
+                    labels: labelList,
+                    created: createdDate,
+                    updated: (f["updated"] as? String).flatMap { TicketScanner.parseDateString($0) },
+                    resolved: (f["resolutiondate"] as? String).flatMap { TicketScanner.parseDateString($0) },
+                    jiraURL: "\(cleanBase)/browse/\(key)"
                 )
                 allTickets.append(ticket)
             }
@@ -251,30 +272,42 @@ public final class JiraService: @unchecked Sendable {
         do {
             let tickets = try await fetchTickets(baseURL: cleanBase, email: email, token: token)
             saveCache(tickets: tickets, baseURL: cleanBase, workspacePath: workspacePath)
+            WorkspaceStateStore.shared.recordJiraSyncResult(date: Date(), error: nil)
             return JiraSyncResult(success: true, ticketCount: tickets.count)
         } catch {
+            WorkspaceStateStore.shared.recordJiraSyncResult(date: Date(), error: error.localizedDescription)
             return JiraSyncResult(success: false, error: error.localizedDescription)
         }
     }
 
     /// Saves ticket data in JSON format matching jira-cache.json for consumption by TicketScanner.
     public func saveCache(tickets: [TicketInfo], baseURL: String, workspacePath: String) {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
         let ticketDicts: [[String: Any]] = tickets.map { ticket in
-            [
+            var dict: [String: Any] = [
                 "key": ticket.key,
                 "summary": ticket.summary,
                 "status": ticket.status,
                 "statusCategory": ticket.statusCategory,
                 "priority": ticket.priority,
-                "type": "Task",
+                "type": ticket.type ?? "Task",
                 "isOpen": ticket.isOpen,
-                "url": "\(baseURL)/browse/\(ticket.key)"
+                "url": ticket.jiraURL ?? "\(baseURL)/browse/\(ticket.key)",
+                "labels": ticket.labels
             ]
+            if let project = ticket.project { dict["project"] = project }
+            if let created = ticket.created { dict["created"] = iso.string(from: created) }
+            if let updated = ticket.updated { dict["updated"] = iso.string(from: updated) }
+            if let resolved = ticket.resolved { dict["resolved"] = iso.string(from: resolved) }
+            return dict
         }
 
         let cacheJSON: [String: Any] = [
             "filter": "assignee = currentUser() ORDER BY updated DESC",
             "fetched_count": tickets.count,
+            "fetched_at": iso.string(from: Date()),
             "tickets": ticketDicts
         ]
 

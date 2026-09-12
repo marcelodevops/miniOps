@@ -44,7 +44,13 @@ public final class TicketScanner: @unchecked Sendable {
                         isOpen: isOpen,
                         localPath: cacheURL.path,
                         notes: "",
-                        created: createdDate
+                        type: item["type"] as? String,
+                        project: item["project"] as? String,
+                        labels: item["labels"] as? [String] ?? [],
+                        created: createdDate,
+                        updated: (item["updated"] as? String).flatMap { Self.parseDateString($0) },
+                        resolved: (item["resolved"] as? String).flatMap { Self.parseDateString($0) },
+                        jiraURL: item["url"] as? String
                     ))
                 }
             }
