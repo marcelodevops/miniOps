@@ -133,6 +133,14 @@ Candidate packaging, window-size checks, interactive runtime acceptance, daily-w
 
 **Gate:** all inventory items are verified equivalent or have a recorded product decision. Partial views do not count as feature parity.
 
+**Status:** Partial (2026-09-11, developed on branch `milestone-5` in parallel with Milestone 4 work on `main`):
+1. `TicketInfo` carries the reference metadata set (type, project, labels, created/updated/resolved, Jira URL). `JiraService` populates and round-trips these fields through `jira-cache.json`, including a `fetched_at` timestamp.
+2. Jira sync freshness/errors persist per workspace (`IntegrationSettings.lastJiraSyncDate/lastJiraSyncError`) and surface as a durable "Synced Xm ago" / "Sync failed" indicator in the ticket navigator, not just a 4-second flash.
+3. The Ticket Detail stage now shows type/project/labels/dates metadata cards and a "Related Repos" section (branch-name match), matches the reference drawer's Jira/local link behavior (a Jira-cache-only ticket no longer mislabels its link as "Open in Editor"), and displays the actual generated branch name.
+4. Test 34 covers date parsing, metadata round-trip, freshness/stale persistence, and related-repo association. Full suite: 1388 passed, 0 failed.
+
+**Remaining:** Agents (notifications, context usage), Graph (search, neighborhood focus, pan/zoom), Settings (workspace/ticket paths, connection verification, import audit) are not yet started.
+
 ### 6. Validate and transition
 
 - Treat this as the sole candidate/runtime acceptance milestone; implementation milestones are not held open for packaging or soak testing once their own gates pass.
