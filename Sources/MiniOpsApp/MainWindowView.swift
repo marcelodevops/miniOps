@@ -441,6 +441,8 @@ public struct MainWindowView: View {
                     ),
                     isSyncing: viewModel.isSyncingTickets,
                     syncStatus: viewModel.ticketSyncStatus,
+                    freshnessLabel: viewModel.ticketFreshnessLabel,
+                    isStale: viewModel.isTicketDataStale,
                     onSelectTicket: { ticket in
                         viewModel.selectTicket(ticket)
                     },
