@@ -115,6 +115,7 @@ public final class WorkspaceScanner: @unchecked Sendable {
         let (branch, isDirty, ahead, behind, changes) = gitService.getRepoStatus(repoPath: resolved.path)
         let origin = gitService.getRemoteOriginType(repoPath: resolved.path)
         let tags = Self.detectRepoTags(url: resolved)
+        let opState = gitService.getRepoOperationState(repoPath: resolved.path)
         return RepoInfo(
             name: resolved.lastPathComponent,
             path: resolved.path,
@@ -125,7 +126,12 @@ public final class WorkspaceScanner: @unchecked Sendable {
             behind: behind,
             changedFiles: changes,
             tags: tags,
-            origin: origin
+            origin: origin,
+            hasUpstream: opState.hasUpstream,
+            stashCount: opState.stashCount,
+            isMerging: opState.isMerging,
+            isRebasing: opState.isRebasing,
+            isCherryPicking: opState.isCherryPicking
         )
     }
 }

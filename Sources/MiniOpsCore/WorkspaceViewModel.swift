@@ -374,6 +374,42 @@ public final class WorkspaceViewModel: ObservableObject {
         return []
     }
 
+    public func visibleRepositories(for filter: RepositoryPanelFilter, search: String = "") -> [RepoInfo] {
+        repositories.filter { repo in
+            let matchesMode: Bool = {
+                switch filter {
+                case .all: return true
+                case .dirty: return repo.isDirty
+                case .tag(let t): return repo.tags.contains(t)
+                case .origin(let o): return repo.normalizedOrigin == o.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                }
+            }()
+            let matchesSearch = search.isEmpty
+                || repo.name.localizedCaseInsensitiveContains(search)
+                || (repo.groupName?.localizedCaseInsensitiveContains(search) ?? false)
+            return matchesMode && matchesSearch
+        }
+    }
+
+    public func filteredTickets(for filter: TicketPanelFilter, search: String = "") -> [TicketInfo] {
+        tickets.filter { ticket in
+            let matchesMode: Bool = {
+                switch filter {
+                case .all: return true
+                case .open: return ticket.isOpen
+                case .category(let c):
+                    return ticket.normalizedCategory.localizedCaseInsensitiveCompare(TicketInfo.normalizeCategory(c)) == .orderedSame
+                case .priority(let p):
+                    return ticket.normalizedPriority.localizedCaseInsensitiveCompare(TicketInfo.normalizePriority(p)) == .orderedSame
+                }
+            }()
+            let matchesSearch = search.isEmpty
+                || ticket.key.localizedCaseInsensitiveContains(search)
+                || ticket.summary.localizedCaseInsensitiveContains(search)
+            return matchesMode && matchesSearch
+        }
+    }
+
     public var reposByType: [(tag: String, count: Int)] {
         var counts: [String: Int] = [:]
         for repo in repositories {
@@ -391,11 +427,7 @@ public final class WorkspaceViewModel: ObservableObject {
     public var reposByOrigin: [(origin: String, count: Int)] {
         var counts: [String: Int] = [:]
         for repo in repositories {
-            if let origin = repo.origin, !origin.isEmpty {
-                counts[origin, default: 0] += 1
-            } else {
-                counts["local", default: 0] += 1
-            }
+            counts[repo.normalizedOrigin, default: 0] += 1
         }
         return counts.sorted { a, b in
             if a.value == b.value { return a.key < b.key }
@@ -410,13 +442,7 @@ public final class WorkspaceViewModel: ObservableObject {
             "Done": 0
         ]
         for ticket in tickets {
-            let cat: String
-            switch ticket.statusCategory.lowercased() {
-            case "done": cat = "Done"
-            case "in_progress", "inprogress": cat = "In Progress"
-            default: cat = "To Do"
-            }
-            counts[cat, default: 0] += 1
+            counts[ticket.normalizedCategory, default: 0] += 1
         }
         return ["To Do", "In Progress", "Done"].map { (category: $0, count: counts[$0] ?? 0) }
     }
@@ -424,8 +450,7 @@ public final class WorkspaceViewModel: ObservableObject {
     public var ticketsByPriority: [(priority: String, count: Int)] {
         var counts: [String: Int] = [:]
         for ticket in tickets {
-            let p = ticket.priority.isEmpty ? "None" : ticket.priority
-            counts[p, default: 0] += 1
+            counts[ticket.normalizedPriority, default: 0] += 1
         }
         let order = ["Highest", "High", "Medium", "Low", "Lowest", "None"]
         return counts.sorted { a, b in
@@ -441,7 +466,7 @@ public final class WorkspaceViewModel: ObservableObject {
         let matchingAgents = agents(for: ticket)
         var lines = [
             "Ticket: \(ticket.key) · \(ticket.summary)",
-            "Status: \(ticket.status) · Priority: \(ticket.priority)",
+            "Status: \(ticket.status) · Priority: \(ticket.normalizedPriority) · Open: \(Int(round(ticket.daysOpen)))d",
             ""
         ]
         lines.append("Repositories (\(repos.count)):")
@@ -478,9 +503,12 @@ public final class WorkspaceViewModel: ObservableObject {
         guard let repo = selectedRepo else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self, gitService] in
             let (branch, isDirty, ahead, behind, changes) = gitService.getRepoStatus(repoPath: repo.path)
+            let opState = gitService.getRepoOperationState(repoPath: repo.path)
             let updated = RepoInfo(name: repo.name, path: repo.path, groupName: repo.groupName,
                                    branch: branch, isDirty: isDirty, ahead: ahead, behind: behind, changedFiles: changes,
-                                   tags: repo.tags, origin: repo.origin)
+                                   tags: repo.tags, origin: repo.origin,
+                                   hasUpstream: opState.hasUpstream, stashCount: opState.stashCount,
+                                   isMerging: opState.isMerging, isRebasing: opState.isRebasing, isCherryPicking: opState.isCherryPicking)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if self.selectedRepo?.path == repo.path {

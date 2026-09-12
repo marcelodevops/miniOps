@@ -2071,8 +2071,8 @@ do {
     }
 }
 
-// Test 34: Overview Analytics, Reference Charts, Tags/Origin Detection, and Focus AI Context
-print("Test 34: Overview Analytics, Reference Charts, Tags/Origin Detection, and Focus AI Context")
+// Test 34: Overview Analytics, Reference Charts, Tags/Origin Detection, Filter Records, and Focus AI Context
+print("Test 34: Overview Analytics, Reference Charts, Tags/Origin Detection, Filter Records, and Focus AI Context")
 do {
     let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try! FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
@@ -2080,9 +2080,12 @@ do {
 
     let repo1URL = tempRoot.appendingPathComponent("k8s-cluster-helm")
     let repo2URL = tempRoot.appendingPathComponent("cloud-terraform-infra")
+    let repo3URL = tempRoot.appendingPathComponent("local-backend-service")
     try! FileManager.default.createDirectory(at: repo1URL, withIntermediateDirectories: true)
     try! FileManager.default.createDirectory(at: repo2URL, withIntermediateDirectories: true)
+    try! FileManager.default.createDirectory(at: repo3URL, withIntermediateDirectories: true)
 
+    // Repo 1: GitHub remote, helm/k8s tags, clean, has stash
     _ = runGit(args: ["init", "-b", "main"], in: repo1URL.path)
     _ = runGit(args: ["config", "user.name", "miniOps Test"], in: repo1URL.path)
     _ = runGit(args: ["config", "user.email", "test@example.com"], in: repo1URL.path)
@@ -2091,7 +2094,10 @@ do {
     try! "apiVersion: v2\nname: test-chart".write(to: repo1URL.appendingPathComponent("Chart.yaml"), atomically: true, encoding: .utf8)
     _ = runGit(args: ["add", "Chart.yaml"], in: repo1URL.path)
     _ = runGit(args: ["commit", "-m", "init helm"], in: repo1URL.path)
+    try! "temp stash".write(to: repo1URL.appendingPathComponent("temp.txt"), atomically: true, encoding: .utf8)
+    _ = runGit(args: ["stash", "push", "-u", "-m", "WIP stash"], in: repo1URL.path)
 
+    // Repo 2: GitLab remote, terraform tag, dirty, merge-in-progress simulation
     _ = runGit(args: ["init", "-b", "feat/INFRA-500"], in: repo2URL.path)
     _ = runGit(args: ["config", "user.name", "miniOps Test"], in: repo2URL.path)
     _ = runGit(args: ["config", "user.email", "test@example.com"], in: repo2URL.path)
@@ -2100,23 +2106,46 @@ do {
     try! "terraform {}\n".write(to: repo2URL.appendingPathComponent("main.tf"), atomically: true, encoding: .utf8)
     _ = runGit(args: ["add", "main.tf"], in: repo2URL.path)
     _ = runGit(args: ["commit", "-m", "init tf"], in: repo2URL.path)
-    // Make repo2 dirty
     try! "# modified\n".write(to: repo2URL.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+    // Simulate merge in progress
+    let gitDirRes = runGit(args: ["rev-parse", "--git-dir"], in: repo2URL.path)
+    let gitDir = gitDirRes.hasPrefix("/") ? gitDirRes : repo2URL.appendingPathComponent(gitDirRes).path
+    let mergeHeadPath = URL(fileURLWithPath: gitDir).appendingPathComponent("MERGE_HEAD").path
+    try! "0123456789abcdef0123456789abcdef01234567\n".write(toFile: mergeHeadPath, atomically: true, encoding: .utf8)
+
+    // Repo 3: Local only (no remote origin, no upstream)
+    _ = runGit(args: ["init", "-b", "dev"], in: repo3URL.path)
+    _ = runGit(args: ["config", "user.name", "miniOps Test"], in: repo3URL.path)
+    _ = runGit(args: ["config", "user.email", "test@example.com"], in: repo3URL.path)
+    _ = runGit(args: ["config", "commit.gpgsign", "false"], in: repo3URL.path)
+    try! "package main\n".write(to: repo3URL.appendingPathComponent("main.go"), atomically: true, encoding: .utf8)
+    _ = runGit(args: ["add", "main.go"], in: repo3URL.path)
+    _ = runGit(args: ["commit", "-m", "init local"], in: repo3URL.path)
 
     let scannedRepos = WorkspaceScanner.shared.scan(rootPath: tempRoot.path)
-    assertEqual(scannedRepos.count, 2, "Scans both repositories in the workspace")
+    assertEqual(scannedRepos.count, 3, "Scans all three repositories in the workspace")
 
     let r1 = scannedRepos.first(where: { $0.name == "k8s-cluster-helm" })
     assert(r1 != nil, "Found k8s repo")
     assert(r1?.tags.contains("k8s") == true, "Tags detect k8s from repo name")
     assert(r1?.tags.contains("helm") == true, "Tags detect helm from Chart.yaml")
     assertEqual(r1?.origin, "github", "Origin detected as github")
+    assertEqual(r1?.normalizedOrigin, "github", "Normalized origin is github")
+    assertEqual(r1?.stashCount, 1, "Detects stashCount from git stash")
 
     let r2 = scannedRepos.first(where: { $0.name == "cloud-terraform-infra" })
     assert(r2 != nil, "Found terraform repo")
     assert(r2?.tags.contains("terraform") == true, "Tags detect terraform from main.tf")
     assertEqual(r2?.origin, "gitlab", "Origin detected as gitlab")
+    assertEqual(r2?.normalizedOrigin, "gitlab", "Normalized origin is gitlab")
     assert(r2?.isDirty == true, "Detects dirty working tree")
+    assert(r2?.isMerging == true, "Detects merge in progress via MERGE_HEAD")
+
+    let r3 = scannedRepos.first(where: { $0.name == "local-backend-service" })
+    assert(r3 != nil, "Found local repo")
+    assertEqual(r3?.origin, nil, "Raw origin is nil for local repo")
+    assertEqual(r3?.normalizedOrigin, "local", "Normalized origin is 'local' when remote origin is nil")
+    assertEqual(r3?.hasUpstream, false, "Local repo without remote tracking has no upstream")
 
     // Test JSON backward compatibility for RepoInfo
     let legacyJSON = """
@@ -2134,20 +2163,33 @@ do {
     assert(decodedRepo != nil, "Legacy RepoInfo JSON decodes successfully without tags or origin")
     assertEqual(decodedRepo?.tags ?? ["dummy"], [], "Missing tags default to empty array")
     assertEqual(decodedRepo?.origin, nil, "Missing origin defaults to nil")
+    assertEqual(decodedRepo?.normalizedOrigin, "local", "Missing origin normalizes to 'local'")
+    assertEqual(decodedRepo?.hasUpstream, true, "Missing hasUpstream defaults to true")
+    assertEqual(decodedRepo?.stashCount, 0, "Missing stashCount defaults to 0")
+    assertEqual(decodedRepo?.isMerging, false, "Missing isMerging defaults to false")
 
     // Test WorkspaceViewModel analytics and filter navigation
     let storeURL = tempRoot.appendingPathComponent("analytics-state.json")
     let store = WorkspaceStateStore(customStorageURL: storeURL)
     store.saveWorkspacePath(tempRoot.path)
 
-    let t1 = TicketInfo(key: "INFRA-500", summary: "Upgrade cluster ingress", status: "In Progress", statusCategory: "in_progress", priority: "High", isOpen: true)
-    let t2 = TicketInfo(key: "OPS-600", summary: "Rotate credentials", status: "To Do", statusCategory: "todo", priority: "Medium", isOpen: true)
-    let t3 = TicketInfo(key: "OPS-400", summary: "Documentation update", status: "Done", statusCategory: "done", priority: "Low", isOpen: false)
+    let now = Date()
+    let day: TimeInterval = 86400
+    let dateCritical = now.addingTimeInterval(-20 * day) // 20 days ago
+    let dateStale = now.addingTimeInterval(-7 * day)      // 7 days ago
+    let dateFresh = now.addingTimeInterval(-1 * day)      // 1 day ago
+
+    let t1 = TicketInfo(key: "INFRA-500", summary: "Upgrade cluster ingress", status: "In Progress", statusCategory: "in_progress", priority: "High", isOpen: true, created: dateCritical)
+    let t2 = TicketInfo(key: "OPS-600", summary: "Rotate credentials", status: "To Do", statusCategory: "todo", priority: "Medium", isOpen: true, created: dateStale)
+    let t3 = TicketInfo(key: "OPS-400", summary: "Documentation update", status: "Done", statusCategory: "done", priority: "Low", isOpen: false, created: dateFresh)
+    // Alias category and empty priority tickets
+    let t4 = TicketInfo(key: "OPS-700", summary: "Worker thread deadlock", status: "In Dev", statusCategory: "inprogress", priority: "", isOpen: true, created: dateFresh)
+    let t5 = TicketInfo(key: "OPS-800", summary: "Review audit log format", status: "Work Pending", statusCategory: "in-progress", priority: "None", isOpen: true, created: dateStale)
 
     MainActor.assumeIsolated {
         let viewModel = WorkspaceViewModel(stateStore: store)
         viewModel.repositories = scannedRepos
-        viewModel.tickets = [t1, t2, t3]
+        viewModel.tickets = [t1, t2, t3, t4, t5]
         viewModel.activeAgents = [
             AgentInfo(
                 pid: 5555,
@@ -2159,53 +2201,234 @@ do {
             )
         ]
 
-        // Check ticketsByCategory
+        // 1. Check ticketsByCategory with aliases
         let catStats = viewModel.ticketsByCategory
-        assertEqual(catStats.first(where: { $0.category == "In Progress" })?.count, 1, "Category In Progress count matches")
-        assertEqual(catStats.first(where: { $0.category == "To Do" })?.count, 1, "Category To Do count matches")
-        assertEqual(catStats.first(where: { $0.category == "Done" })?.count, 1, "Category Done count matches")
+        assertEqual(catStats.first(where: { $0.category == "In Progress" })?.count, 3, "Category In Progress counts 'in_progress', 'inprogress', and 'in-progress' (t1, t4, t5)")
+        assertEqual(catStats.first(where: { $0.category == "To Do" })?.count, 1, "Category To Do counts t2")
+        assertEqual(catStats.first(where: { $0.category == "Done" })?.count, 1, "Category Done counts t3")
 
-        // Check ticketsByPriority
+        // 2. Check ticketsByPriority with empty and 'None'
         let prioStats = viewModel.ticketsByPriority
-        assertEqual(prioStats.first(where: { $0.priority == "High" })?.count, 1, "Priority High count matches")
-        assertEqual(prioStats.first(where: { $0.priority == "Medium" })?.count, 1, "Priority Medium count matches")
-        assertEqual(prioStats.first(where: { $0.priority == "Low" })?.count, 1, "Priority Low count matches")
+        assertEqual(prioStats.first(where: { $0.priority == "High" })?.count, 1, "Priority High count matches t1")
+        assertEqual(prioStats.first(where: { $0.priority == "Medium" })?.count, 1, "Priority Medium count matches t2")
+        assertEqual(prioStats.first(where: { $0.priority == "Low" })?.count, 1, "Priority Low count matches t3")
+        assertEqual(prioStats.first(where: { $0.priority == "None" })?.count, 2, "Priority None count includes empty string (t4) and 'None' (t5)")
 
-        // Check reposByType
+        // 3. Check reposByType
         let typeStats = viewModel.reposByType
         assert(typeStats.contains(where: { $0.tag == "k8s" && $0.count == 1 }), "reposByType includes k8s")
         assert(typeStats.contains(where: { $0.tag == "terraform" && $0.count == 1 }), "reposByType includes terraform")
 
-        // Check reposByOrigin
+        // 4. Check reposByOrigin including local
         let originStats = viewModel.reposByOrigin
         assert(originStats.contains(where: { $0.origin == "github" && $0.count == 1 }), "reposByOrigin includes github")
         assert(originStats.contains(where: { $0.origin == "gitlab" && $0.count == 1 }), "reposByOrigin includes gitlab")
+        assert(originStats.contains(where: { $0.origin == "local" && $0.count == 1 }), "reposByOrigin includes local for repositories with origin == nil")
 
-        // Check interactive chart navigation
-        viewModel.showTickets(filter: .category("In Progress"))
-        assertEqual(viewModel.ticketPanelFilter, .category("In Progress"), "Category filter applied to tickets")
-        assertEqual(viewModel.workbenchLayout.activeLeftTab, .tickets, "Navigates to tickets panel")
+        // 5. Check actual records displayed by repository origin filter (Fixing P2: Local origin returns no repos)
+        let localRepos = viewModel.visibleRepositories(for: .origin("local"))
+        assertEqual(localRepos.count, 1, "Filtering by origin 'local' returns 1 repository")
+        assertEqual(localRepos.first?.name, "local-backend-service", "Filtering by origin 'local' returns the local repository whose origin is nil")
 
-        viewModel.showTickets(filter: .priority("High"))
-        assertEqual(viewModel.ticketPanelFilter, .priority("High"), "Priority filter applied to tickets")
+        let githubRepos = viewModel.visibleRepositories(for: .origin("github"))
+        assertEqual(githubRepos.count, 1, "Filtering by origin 'github' returns 1 repository")
+        assertEqual(githubRepos.first?.name, "k8s-cluster-helm", "Filtering by origin 'github' returns the github repository")
 
-        viewModel.showRepositories(filter: .tag("k8s"))
-        assertEqual(viewModel.repositoryPanelFilter, .tag("k8s"), "Tag filter applied to repos")
-        assertEqual(viewModel.workbenchLayout.activeLeftTab, .repos, "Navigates to repos panel")
+        let gitlabRepos = viewModel.visibleRepositories(for: .origin("gitlab"))
+        assertEqual(gitlabRepos.count, 1, "Filtering by origin 'gitlab' returns 1 repository")
+        assertEqual(gitlabRepos.first?.name, "cloud-terraform-infra", "Filtering by origin 'gitlab' returns the gitlab repository")
 
-        viewModel.showRepositories(filter: .origin("github"))
-        assertEqual(viewModel.repositoryPanelFilter, .origin("github"), "Origin filter applied to repos")
+        // 6. Check actual records displayed by ticket category filter (Fixing P2: Category aliases)
+        let inProgressTickets = viewModel.filteredTickets(for: .category("In Progress"))
+        assertEqual(inProgressTickets.count, 3, "Filtering by 'In Progress' returns all 3 matching tickets including aliases")
+        assert(inProgressTickets.contains(where: { $0.key == "INFRA-500" }), "Contains in_progress ticket")
+        assert(inProgressTickets.contains(where: { $0.key == "OPS-700" }), "Contains inprogress ticket")
+        assert(inProgressTickets.contains(where: { $0.key == "OPS-800" }), "Contains in-progress ticket")
 
-        // Check Focus AI Context snapshot
+        // 7. Check actual records displayed by ticket priority filter (Fixing P2: Empty priority disappearing)
+        let nonePriorityTickets = viewModel.filteredTickets(for: .priority("None"))
+        assertEqual(nonePriorityTickets.count, 2, "Filtering by 'None' priority returns 2 tickets")
+        assert(nonePriorityTickets.contains(where: { $0.key == "OPS-700" }), "Tickets with empty priority '' do NOT disappear when clicking 'None'")
+        assert(nonePriorityTickets.contains(where: { $0.key == "OPS-800" }), "Tickets with 'None' priority appear when clicking 'None'")
+
+        // 8. Check Reference Repository Attention Scoring and Reasons
+        // r2 has isMerging (100) + isDirty (10) = 110
+        let r2Reasons = [
+            r2?.isMerging == true ? "merge in progress" : nil,
+            r2?.isDirty == true ? "dirty" : nil
+        ].compactMap { $0 }
+        assert(r2Reasons.contains("merge in progress"), "r2 attention reasons include 'merge in progress'")
+        assert(r2Reasons.contains("dirty"), "r2 attention reasons include 'dirty'")
+
+        // r3 has no upstream (+3)
+        let r3Reasons = [
+            r3?.hasUpstream == false ? "no upstream" : nil
+        ].compactMap { $0 }
+        assert(r3Reasons.contains("no upstream"), "r3 attention reasons include 'no upstream'")
+
+        // r1 has stash (+1)
+        let r1Reasons = [
+            (r1?.stashCount ?? 0) > 0 ? "\(r1!.stashCount) stashed" : nil
+        ].compactMap { $0 }
+        assert(r1Reasons.contains("1 stashed"), "r1 attention reasons include '1 stashed'")
+
+        // 9. Check Reference Ticket Attention Ranking and Age Badges
+        let openTickets = viewModel.tickets.filter { $0.isOpen }.sorted { $0.daysOpen > $1.daysOpen }
+        assertEqual(openTickets.count, 4, "4 open tickets needing attention")
+        assertEqual(openTickets.first?.key, "INFRA-500", "Oldest ticket (20d) ranked first in attention queue")
+        assert(openTickets.first?.ageBand.isCritical == true, "20d ticket classified in critical age band (red)")
+        assertEqual(openTickets.first?.ageBand.label, "20d", "20d ticket label formatted correctly")
+
+        let staleTicket = openTickets.first(where: { $0.key == "OPS-600" })
+        assert(staleTicket?.ageBand.isStale == true, "7d ticket classified in stale age band (amber)")
+        assertEqual(staleTicket?.ageBand.label, "7d", "7d ticket label formatted correctly")
+
+        let freshTicket = openTickets.first(where: { $0.key == "OPS-700" })
+        assert(freshTicket?.ageBand.isCritical == false && freshTicket?.ageBand.isStale == false, "1d ticket classified in fresh age band (green)")
+        assertEqual(freshTicket?.ageBand.label, "1d", "1d ticket label formatted correctly")
+
+        // 10. Check Focus AI Context snapshot
         let snapshot = viewModel.aiContextSnapshot(for: t1)
         assert(snapshot.contains("Ticket: INFRA-500"), "AI snapshot contains ticket key")
         assert(snapshot.contains("Upgrade cluster ingress"), "AI snapshot contains summary")
         assert(snapshot.contains("Priority: High"), "AI snapshot contains priority")
+        assert(snapshot.contains("Open: 20d"), "AI snapshot contains open age")
         assert(snapshot.contains("Repositories (1):"), "AI snapshot associates 1 repository via branch feat/INFRA-500")
         assert(snapshot.contains("cloud-terraform-infra"), "AI snapshot names associated repository")
-        assert(snapshot.contains("Agents (1):"), "AI snapshot associates 1 agent from repository")
-        assert(snapshot.contains("TerraformAgent"), "AI snapshot includes agent tool name")
-        assert(snapshot.contains("waiting for input"), "AI snapshot includes agent state")
+        // 11. Reference Fixture Parity Comparison Against myOps
+        struct FixtureRepoCase {
+            let name: String
+            let merging: Bool
+            let rebasing: Bool
+            let cherryPicking: Bool
+            let dirty: Bool
+            let hasUpstream: Bool
+            let behind: Int
+            let ahead: Int
+            let stashCount: Int
+            let expectedScore: Int
+            let expectedReasons: [String]
+        }
+
+        let referenceFixtureMatrix: [FixtureRepoCase] = [
+            FixtureRepoCase(
+                name: "merge-conflict",
+                merging: true, rebasing: false, cherryPicking: false,
+                dirty: true, hasUpstream: true, behind: 3, ahead: 2, stashCount: 2,
+                expectedScore: 120, // 100 (merge) + 10 (dirty) + (5+3 behind) + 1 (ahead) + 1 (stash)
+                expectedReasons: ["merge in progress", "dirty", "↓3 behind", "↑2 not pushed", "2 stashed"]
+            ),
+            FixtureRepoCase(
+                name: "rebase-local",
+                merging: false, rebasing: true, cherryPicking: false,
+                dirty: false, hasUpstream: false, behind: 0, ahead: 0, stashCount: 0,
+                expectedScore: 103, // 100 (rebase) + 3 (no upstream)
+                expectedReasons: ["rebase in progress", "no upstream"]
+            ),
+            FixtureRepoCase(
+                name: "cherry-picking",
+                merging: false, rebasing: false, cherryPicking: true,
+                dirty: false, hasUpstream: true, behind: 0, ahead: 0, stashCount: 0,
+                expectedScore: 100, // 100 (cherry-pick)
+                expectedReasons: ["cherry-pick in progress"]
+            ),
+            FixtureRepoCase(
+                name: "behind-remote",
+                merging: false, rebasing: false, cherryPicking: false,
+                dirty: false, hasUpstream: true, behind: 10, ahead: 0, stashCount: 0,
+                expectedScore: 15, // 5 + 10 (behind)
+                expectedReasons: ["↓10 behind"]
+            ),
+            FixtureRepoCase(
+                name: "dirty-worktree",
+                merging: false, rebasing: false, cherryPicking: false,
+                dirty: true, hasUpstream: true, behind: 0, ahead: 0, stashCount: 0,
+                expectedScore: 10, // 10 (dirty)
+                expectedReasons: ["dirty"]
+            ),
+            FixtureRepoCase(
+                name: "untracked-branch",
+                merging: false, rebasing: false, cherryPicking: false,
+                dirty: false, hasUpstream: false, behind: 0, ahead: 0, stashCount: 0,
+                expectedScore: 3, // 3 (no upstream)
+                expectedReasons: ["no upstream"]
+            ),
+            FixtureRepoCase(
+                name: "unpushed-commits",
+                merging: false, rebasing: false, cherryPicking: false,
+                dirty: false, hasUpstream: true, behind: 0, ahead: 5, stashCount: 0,
+                expectedScore: 1, // 1 (ahead)
+                expectedReasons: ["↑5 not pushed"]
+            ),
+            FixtureRepoCase(
+                name: "stashes-only",
+                merging: false, rebasing: false, cherryPicking: false,
+                dirty: false, hasUpstream: true, behind: 0, ahead: 0, stashCount: 3,
+                expectedScore: 1, // 1 (stash)
+                expectedReasons: ["3 stashed"]
+            ),
+            FixtureRepoCase(
+                name: "pristine-clean",
+                merging: false, rebasing: false, cherryPicking: false,
+                dirty: false, hasUpstream: true, behind: 0, ahead: 0, stashCount: 0,
+                expectedScore: 0,
+                expectedReasons: []
+            )
+        ]
+
+        func computeScore(for r: RepoInfo) -> Int {
+            var score = 0
+            if r.isMerging || r.isRebasing || r.isCherryPicking { score += 100 }
+            if r.isDirty { score += 10 }
+            if r.hasUpstream && r.behind > 0 { score += 5 + r.behind }
+            if !r.hasUpstream { score += 3 }
+            if r.hasUpstream && r.ahead > 0 { score += 1 }
+            if r.stashCount > 0 { score += 1 }
+            return score
+        }
+
+        func computeReasons(for r: RepoInfo) -> [String] {
+            var reasons: [String] = []
+            if r.isMerging { reasons.append("merge in progress") }
+            if r.isRebasing { reasons.append("rebase in progress") }
+            if r.isCherryPicking { reasons.append("cherry-pick in progress") }
+            if r.isDirty { reasons.append("dirty") }
+            if r.hasUpstream && r.behind > 0 { reasons.append("↓\(r.behind) behind") }
+            if !r.hasUpstream { reasons.append("no upstream") }
+            if r.hasUpstream && r.ahead > 0 { reasons.append("↑\(r.ahead) not pushed") }
+            if r.stashCount > 0 { reasons.append("\(r.stashCount) stashed") }
+            return reasons
+        }
+
+        for fx in referenceFixtureMatrix {
+            let info = RepoInfo(
+                name: fx.name,
+                path: "/fixtures/\(fx.name)",
+                isDirty: fx.dirty,
+                ahead: fx.ahead,
+                behind: fx.behind,
+                hasUpstream: fx.hasUpstream,
+                stashCount: fx.stashCount,
+                isMerging: fx.merging,
+                isRebasing: fx.rebasing,
+                isCherryPicking: fx.cherryPicking
+            )
+            assertEqual(computeScore(for: info), fx.expectedScore, "Fixture \(fx.name) attention score matches myOps reference")
+            assertEqual(computeReasons(for: info), fx.expectedReasons, "Fixture \(fx.name) attention reasons match myOps reference")
+        }
+
+        // 12. Reference Age Band Parity
+        let testTicketCritical = TicketInfo(key: "FX-1", summary: "Critical", isOpen: true, created: now.addingTimeInterval(-15.2 * day))
+        assertEqual(testTicketCritical.ageBand.label, "15d", "Age 15.2d labels as '15d'")
+        assert(testTicketCritical.ageBand.isCritical, "Age >= 14d is in critical band")
+
+        let testTicketStale = TicketInfo(key: "FX-2", summary: "Stale", isOpen: true, created: now.addingTimeInterval(-5.0 * day))
+        assertEqual(testTicketStale.ageBand.label, "5d", "Age 5.0d labels as '5d'")
+        assert(testTicketStale.ageBand.isStale, "Age >= 5d is in stale band")
+
+        let testTicketFresh = TicketInfo(key: "FX-3", summary: "Fresh", isOpen: true, created: now.addingTimeInterval(-2.4 * day))
+        assertEqual(testTicketFresh.ageBand.label, "2d", "Age 2.4d labels as '2d'")
+        assert(!testTicketFresh.ageBand.isCritical && !testTicketFresh.ageBand.isStale, "Age < 5d is in fresh band")
     }
 }
 

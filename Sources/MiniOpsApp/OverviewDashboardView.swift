@@ -508,11 +508,9 @@ public struct OverviewDashboardView: View {
 
     private var dirtyReposSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            let attentionRepos = viewModel.repositories.filter { repo in
-                repo.isDirty || repo.behind > 0 || repo.ahead > 0
-            }.sorted { a, b in
-                attentionScore(for: a) > attentionScore(for: b)
-            }
+            let attentionRepos = viewModel.repositories
+                .filter { attentionScore(for: $0) > 0 }
+                .sorted { attentionScore(for: $0) > attentionScore(for: $1) }
 
             HStack {
                 Text("REPOSITORIES NEEDING ATTENTION")
@@ -538,7 +536,7 @@ public struct OverviewDashboardView: View {
                 .cornerRadius(8)
             } else {
                 VStack(spacing: 6) {
-                    ForEach(attentionRepos.prefix(6)) { repo in
+                    ForEach(attentionRepos.prefix(12)) { repo in
                         HStack(spacing: 8) {
                             Image(systemName: "folder.fill")
                                 .foregroundColor(.accentColor)
@@ -548,12 +546,13 @@ public struct OverviewDashboardView: View {
                                     .font(.system(size: 11, weight: .bold))
                                 HStack(spacing: 4) {
                                     ForEach(attentionReasons(for: repo), id: \.self) { reason in
+                                        let isWarn = reason.contains("dirty") || reason.contains("merge") || reason.contains("rebase") || reason.contains("cherry-pick") || reason.contains("behind")
                                         Text(reason)
                                             .font(.system(size: 9, weight: .semibold))
                                             .padding(.horizontal, 4)
                                             .padding(.vertical, 1)
-                                            .background(reason.contains("dirty") ? Color.orange.opacity(0.2) : Color.secondary.opacity(0.15))
-                                            .foregroundColor(reason.contains("dirty") ? .orange : .secondary)
+                                            .background(isWarn ? Color.orange.opacity(0.2) : Color.secondary.opacity(0.15))
+                                            .foregroundColor(isWarn ? .orange : .secondary)
                                             .cornerRadius(3)
                                     }
                                     Text("on \(repo.branch)")
@@ -582,23 +581,38 @@ public struct OverviewDashboardView: View {
 
     private func attentionScore(for repo: RepoInfo) -> Int {
         var score = 0
+        if repo.isMerging || repo.isRebasing || repo.isCherryPicking { score += 100 }
         if repo.isDirty { score += 10 }
-        if repo.behind > 0 { score += 5 + repo.behind }
-        if repo.ahead > 0 { score += 1 }
+        if repo.hasUpstream && repo.behind > 0 { score += 5 + repo.behind }
+        if !repo.hasUpstream { score += 3 }
+        if repo.hasUpstream && repo.ahead > 0 { score += 1 }
+        if repo.stashCount > 0 { score += 1 }
         return score
     }
 
     private func attentionReasons(for repo: RepoInfo) -> [String] {
         var reasons: [String] = []
+        if repo.isMerging { reasons.append("merge in progress") }
+        if repo.isRebasing { reasons.append("rebase in progress") }
+        if repo.isCherryPicking { reasons.append("cherry-pick in progress") }
         if repo.isDirty { reasons.append("dirty") }
-        if repo.behind > 0 { reasons.append("↓\(repo.behind) behind") }
-        if repo.ahead > 0 { reasons.append("↑\(repo.ahead) not pushed") }
+        if repo.hasUpstream && repo.behind > 0 { reasons.append("↓\(repo.behind) behind") }
+        if !repo.hasUpstream { reasons.append("no upstream") }
+        if repo.hasUpstream && repo.ahead > 0 { reasons.append("↑\(repo.ahead) not pushed") }
+        if repo.stashCount > 0 { reasons.append("\(repo.stashCount) stashed") }
         return reasons
     }
 
     private var attentionTicketsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            let openTickets = viewModel.tickets.filter { $0.isOpen }
+            let openTickets = viewModel.tickets
+                .filter { $0.isOpen }
+                .sorted { a, b in
+                    if a.daysOpen == b.daysOpen {
+                        return a.key < b.key
+                    }
+                    return a.daysOpen > b.daysOpen
+                }
             HStack {
                 Text("TICKETS NEEDING ATTENTION")
                     .font(.system(size: 11, weight: .bold))
@@ -623,7 +637,7 @@ public struct OverviewDashboardView: View {
                 .cornerRadius(8)
             } else {
                 VStack(spacing: 6) {
-                    ForEach(openTickets.prefix(6)) { ticket in
+                    ForEach(openTickets.prefix(12)) { ticket in
                         HStack(spacing: 8) {
                             Text(ticket.key)
                                 .font(.system(size: 11, weight: .bold))
@@ -634,15 +648,25 @@ public struct OverviewDashboardView: View {
                                     .font(.system(size: 11))
                                     .lineLimit(1)
                                 HStack(spacing: 6) {
+                                    let band = ticket.ageBand
+                                    Text(band.label)
+                                        .font(.system(size: 9, weight: .bold))
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(band.isCritical ? Color.red.opacity(0.2) : (band.isStale ? Color.orange.opacity(0.2) : Color.green.opacity(0.2)))
+                                        .foregroundColor(band.isCritical ? .red : (band.isStale ? .orange : .green))
+                                        .cornerRadius(3)
+
                                     Text(ticket.status)
                                         .font(.system(size: 9))
                                         .padding(.horizontal, 4)
                                         .padding(.vertical, 1)
                                         .background(Color.secondary.opacity(0.15))
                                         .cornerRadius(3)
-                                    Text(ticket.priority)
+
+                                    Text(ticket.normalizedPriority)
                                         .font(.system(size: 9, weight: .semibold))
-                                        .foregroundColor(priorityColor(ticket.priority))
+                                        .foregroundColor(priorityColor(ticket.normalizedPriority))
                                 }
                             }
                             Spacer()

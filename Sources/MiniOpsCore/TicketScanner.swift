@@ -32,6 +32,8 @@ public final class TicketScanner: @unchecked Sendable {
                     let cat = (item["statusCategory"] as? String ?? "todo").lowercased()
                     let priority = item["priority"] as? String ?? "Medium"
                     let isOpen = cat != "done" && status.lowercased() != "closed"
+                    let createdStr = (item["created"] as? String) ?? (item["createdDate"] as? String)
+                    let createdDate = createdStr.flatMap { Self.parseDateString($0) }
                     seenKeys.insert(key)
                     tickets.append(TicketInfo(
                         key: key,
@@ -41,7 +43,8 @@ public final class TicketScanner: @unchecked Sendable {
                         priority: priority,
                         isOpen: isOpen,
                         localPath: cacheURL.path,
-                        notes: ""
+                        notes: "",
+                        created: createdDate
                     ))
                 }
             }
@@ -69,6 +72,7 @@ public final class TicketScanner: @unchecked Sendable {
                     var status = "To Do"
                     var cat = "todo"
                     var priority = "Medium"
+                    var createdDate: Date?
 
                     for line in content.components(separatedBy: "\n") {
                         let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -83,7 +87,14 @@ public final class TicketScanner: @unchecked Sendable {
                             }
                         } else if trimmed.lowercased().hasPrefix("priority:") {
                             priority = String(trimmed.dropFirst("priority:".count)).trimmingCharacters(in: .whitespaces)
+                        } else if trimmed.lowercased().hasPrefix("created:") {
+                            let rawDate = String(trimmed.dropFirst("created:".count)).trimmingCharacters(in: .whitespaces)
+                            createdDate = Self.parseDateString(rawDate)
                         }
+                    }
+
+                    if createdDate == nil, let attr = try? FileManager.default.attributesOfItem(atPath: file.path) {
+                        createdDate = (attr[.creationDate] as? Date) ?? (attr[.modificationDate] as? Date)
                     }
 
                     seenKeys.insert(key)
@@ -95,13 +106,29 @@ public final class TicketScanner: @unchecked Sendable {
                         priority: priority,
                         isOpen: cat != "done",
                         localPath: file.path,
-                        notes: ""
+                        notes: "",
+                        created: createdDate
                     ))
                 }
             }
         }
 
         return tickets
+    }
+
+    public static func parseDateString(_ s: String) -> Date? {
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = isoFormatter.date(from: s) { return d }
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        if let d = isoFormatter.date(from: s) { return d }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        for format in ["yyyy-MM-dd'T'HH:mm:ss.SSSZ", "yyyy-MM-dd'T'HH:mm:ssZ", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd"] {
+            df.dateFormat = format
+            if let d = df.date(from: s) { return d }
+        }
+        return nil
     }
 
     public func makeFeatureBranchName(ticket: TicketInfo) -> String {

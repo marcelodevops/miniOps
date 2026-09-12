@@ -88,6 +88,34 @@ public final class GitService: @unchecked Sendable {
         return (branch, isDirty, ahead, behind, changes)
     }
 
+    public func getRepoOperationState(repoPath: String) -> (hasUpstream: Bool, isMerging: Bool, isRebasing: Bool, isCherryPicking: Bool, stashCount: Int) {
+        let upstreamCheck = runGit(args: ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], in: repoPath)
+        let hasUpstream = (upstreamCheck.status == 0 && !upstreamCheck.stdout.isEmpty)
+
+        let gitDirRes = runGit(args: ["rev-parse", "--git-dir"], in: repoPath)
+        let gitDirPath: String
+        if gitDirRes.status == 0 && !gitDirRes.stdout.isEmpty {
+            let out = gitDirRes.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            gitDirPath = out.hasPrefix("/") ? out : URL(fileURLWithPath: repoPath).appendingPathComponent(out).path
+        } else {
+            gitDirPath = URL(fileURLWithPath: repoPath).appendingPathComponent(".git").path
+        }
+
+        let gitDirURL = URL(fileURLWithPath: gitDirPath)
+        let isMerging = FileManager.default.fileExists(atPath: gitDirURL.appendingPathComponent("MERGE_HEAD").path)
+        let isRebasing = FileManager.default.fileExists(atPath: gitDirURL.appendingPathComponent("rebase-merge").path)
+            || FileManager.default.fileExists(atPath: gitDirURL.appendingPathComponent("rebase-apply").path)
+        let isCherryPicking = FileManager.default.fileExists(atPath: gitDirURL.appendingPathComponent("CHERRY_PICK_HEAD").path)
+
+        var stashCount = 0
+        let stashRes = runGit(args: ["stash", "list"], in: repoPath)
+        if stashRes.status == 0 && !stashRes.stdout.isEmpty {
+            stashCount = stashRes.stdout.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
+        }
+
+        return (hasUpstream, isMerging, isRebasing, isCherryPicking, stashCount)
+    }
+
     public func getDiff(repoPath: String, filePath: String, cached: Bool = false) -> String {
         // Check if file is untracked
         let fullURL = URL(fileURLWithPath: repoPath).appendingPathComponent(filePath)

@@ -27,6 +27,18 @@ public struct RepoInfo: Codable, Identifiable, Hashable, Sendable {
     public var changedFiles: [GitFileChange]
     public var tags: [String]
     public var origin: String?
+    public var hasUpstream: Bool
+    public var stashCount: Int
+    public var isMerging: Bool
+    public var isRebasing: Bool
+    public var isCherryPicking: Bool
+
+    public var normalizedOrigin: String {
+        if let origin = origin?.trimmingCharacters(in: .whitespacesAndNewlines), !origin.isEmpty {
+            return origin.lowercased()
+        }
+        return "local"
+    }
 
     public init(
         name: String,
@@ -38,7 +50,12 @@ public struct RepoInfo: Codable, Identifiable, Hashable, Sendable {
         behind: Int = 0,
         changedFiles: [GitFileChange] = [],
         tags: [String] = [],
-        origin: String? = nil
+        origin: String? = nil,
+        hasUpstream: Bool = true,
+        stashCount: Int = 0,
+        isMerging: Bool = false,
+        isRebasing: Bool = false,
+        isCherryPicking: Bool = false
     ) {
         self.name = name
         self.path = path
@@ -50,10 +67,16 @@ public struct RepoInfo: Codable, Identifiable, Hashable, Sendable {
         self.changedFiles = changedFiles
         self.tags = tags
         self.origin = origin
+        self.hasUpstream = hasUpstream
+        self.stashCount = stashCount
+        self.isMerging = isMerging
+        self.isRebasing = isRebasing
+        self.isCherryPicking = isCherryPicking
     }
 
     enum CodingKeys: String, CodingKey {
         case name, path, groupName, branch, isDirty, ahead, behind, changedFiles, tags, origin
+        case hasUpstream, stashCount, isMerging, isRebasing, isCherryPicking
     }
 
     public init(from decoder: Decoder) throws {
@@ -68,6 +91,11 @@ public struct RepoInfo: Codable, Identifiable, Hashable, Sendable {
         self.changedFiles = try container.decodeIfPresent([GitFileChange].self, forKey: .changedFiles) ?? []
         self.tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         self.origin = try container.decodeIfPresent(String.self, forKey: .origin)
+        self.hasUpstream = try container.decodeIfPresent(Bool.self, forKey: .hasUpstream) ?? true
+        self.stashCount = try container.decodeIfPresent(Int.self, forKey: .stashCount) ?? 0
+        self.isMerging = try container.decodeIfPresent(Bool.self, forKey: .isMerging) ?? false
+        self.isRebasing = try container.decodeIfPresent(Bool.self, forKey: .isRebasing) ?? false
+        self.isCherryPicking = try container.decodeIfPresent(Bool.self, forKey: .isCherryPicking) ?? false
     }
 }
 
@@ -392,6 +420,7 @@ public struct TicketInfo: Codable, Identifiable, Hashable, Sendable {
     public let isOpen: Bool
     public let localPath: String?
     public var notes: String
+    public var created: Date?
 
     public init(
         key: String,
@@ -401,7 +430,8 @@ public struct TicketInfo: Codable, Identifiable, Hashable, Sendable {
         priority: String = "Medium",
         isOpen: Bool = true,
         localPath: String? = nil,
-        notes: String = ""
+        notes: String = "",
+        created: Date? = nil
     ) {
         self.key = key
         self.summary = summary
@@ -411,6 +441,77 @@ public struct TicketInfo: Codable, Identifiable, Hashable, Sendable {
         self.isOpen = isOpen
         self.localPath = localPath
         self.notes = notes
+        self.created = created
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case key, summary, status, statusCategory, priority, isOpen, localPath, notes, created
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.key = try container.decode(String.self, forKey: .key)
+        self.summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? "No summary"
+        self.status = try container.decodeIfPresent(String.self, forKey: .status) ?? "To Do"
+        self.statusCategory = try container.decodeIfPresent(String.self, forKey: .statusCategory) ?? "todo"
+        self.priority = try container.decodeIfPresent(String.self, forKey: .priority) ?? "Medium"
+        self.isOpen = try container.decodeIfPresent(Bool.self, forKey: .isOpen) ?? true
+        self.localPath = try container.decodeIfPresent(String.self, forKey: .localPath)
+        self.notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        self.created = try container.decodeIfPresent(Date.self, forKey: .created)
+    }
+
+    public static func normalizeCategory(_ raw: String) -> String {
+        let clean = raw.lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        if clean.contains("done") || clean.contains("closed") || clean.contains("complete") {
+            return "Done"
+        } else if clean.contains("progress") {
+            return "In Progress"
+        } else {
+            return "To Do"
+        }
+    }
+
+    public var normalizedCategory: String {
+        Self.normalizeCategory(statusCategory.isEmpty ? status : statusCategory)
+    }
+
+    public static func normalizePriority(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed.lowercased() == "none" {
+            return "None"
+        }
+        let lower = trimmed.lowercased()
+        if lower == "highest" { return "Highest" }
+        if lower == "high" { return "High" }
+        if lower == "medium" { return "Medium" }
+        if lower == "low" { return "Low" }
+        if lower == "lowest" { return "Lowest" }
+        return trimmed.prefix(1).uppercased() + trimmed.dropFirst().lowercased()
+    }
+
+    public var normalizedPriority: String {
+        Self.normalizePriority(priority)
+    }
+
+    public var daysOpen: Double {
+        guard let created = created else { return 0 }
+        return max(0, Date().timeIntervalSince(created) / 86400.0)
+    }
+
+    public var ageBand: (label: String, isCritical: Bool, isStale: Bool) {
+        let days = daysOpen
+        let label = "\(Int(round(days)))d"
+        if days >= 14 {
+            return (label, true, false)
+        } else if days >= 5 {
+            return (label, false, true)
+        } else {
+            return (label, false, false)
+        }
     }
 }
 

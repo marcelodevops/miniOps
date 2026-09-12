@@ -360,20 +360,7 @@ public struct MainWindowView: View {
     private func panelContent(_ panel: WorkbenchPanel) -> some View {
         switch panel {
             case .repos:
-                let visibleRepositories = viewModel.repositories.filter { repo in
-                    let matchesMode: Bool = {
-                        switch viewModel.repositoryPanelFilter {
-                        case .all: return true
-                        case .dirty: return repo.isDirty
-                        case .tag(let t): return repo.tags.contains(t)
-                        case .origin(let o): return repo.origin?.lowercased() == o.lowercased()
-                        }
-                    }()
-                    let matchesSearch = repositorySearch.isEmpty
-                        || repo.name.localizedCaseInsensitiveContains(repositorySearch)
-                        || (repo.groupName?.localizedCaseInsensitiveContains(repositorySearch) ?? false)
-                    return matchesMode && matchesSearch
-                }
+                let visibleRepositories = viewModel.visibleRepositories(for: viewModel.repositoryPanelFilter, search: repositorySearch)
 
                 VStack(spacing: 0) {
                     HStack {
@@ -466,19 +453,7 @@ public struct MainWindowView: View {
                 }
 
             case .tickets:
-                let filteredTickets = viewModel.tickets.filter { ticket in
-                    switch viewModel.ticketPanelFilter {
-                    case .all: return true
-                    case .open: return ticket.isOpen
-                    case .category(let c):
-                        return ticket.statusCategory.localizedCaseInsensitiveCompare(c) == .orderedSame
-                            || (c == "In Progress" && ticket.statusCategory.lowercased() == "in_progress")
-                            || (c == "To Do" && ticket.statusCategory.lowercased() == "todo")
-                            || ticket.status.localizedCaseInsensitiveCompare(c) == .orderedSame
-                    case .priority(let p):
-                        return ticket.priority.localizedCaseInsensitiveCompare(p) == .orderedSame
-                    }
-                }
+                let filteredTickets = viewModel.filteredTickets(for: viewModel.ticketPanelFilter)
 
                 VStack(spacing: 0) {
                     if case .category(let c) = viewModel.ticketPanelFilter {

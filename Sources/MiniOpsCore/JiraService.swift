@@ -207,6 +207,8 @@ public final class JiraService: @unchecked Sendable {
                 let priorityDict = f["priority"] as? [String: Any] ?? [:]
                 let priorityName = priorityDict["name"] as? String ?? "None"
                 let isOpen = cat != "done" && statusName.lowercased() != "closed"
+                let createdStr = f["created"] as? String
+                let createdDate = createdStr.flatMap { TicketScanner.parseDateString($0) }
 
                 let ticket = TicketInfo(
                     key: key,
@@ -216,7 +218,8 @@ public final class JiraService: @unchecked Sendable {
                     priority: priorityName,
                     isOpen: isOpen,
                     localPath: nil,
-                    notes: ""
+                    notes: "",
+                    created: createdDate
                 )
                 allTickets.append(ticket)
             }

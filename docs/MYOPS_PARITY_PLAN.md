@@ -124,13 +124,14 @@ Candidate packaging, window-size checks, interactive runtime acceptance, daily-w
    - Tickets by priority (`#barPrio`): horizontal proportional bars with `.priority` panel filter navigation.
    - Repositories by type (`#barRepos`): horizontal proportional bars displaying tags with `.tag` panel filter navigation.
    - Repositories by origin (`#barOrigin`): horizontal proportional bars displaying origins (`github`, `gitlab`, `bitbucket`, `local`) with `.origin` panel filter navigation.
-6. Enriched `RepoInfo` with `tags: [String]` and `origin: String?`, detected natively during workspace scanning and remote inspection, with backward-compatible JSON decoding for existing stores.
-7. Reference-matching Attention Lists:
-   - Repositories needing attention ranked by `attentionScore` (`dirty`, `↓behind`, `↑not pushed`, `merge in progress`) with quick "Review" action activating the Git inspector.
-   - Tickets needing attention showing open tickets with priority chips, status, and quick "Focus" action.
+6. Enriched `RepoInfo` with `tags: [String]`, `origin: String?`, `normalizedOrigin: String`, `hasUpstream: Bool`, `stashCount: Int`, `isMerging: Bool`, `isRebasing: Bool`, and `isCherryPicking: Bool`, with backward-compatible JSON decoding for existing stores. Origin filtering normalizes `nil` to `"local"`, ensuring local repositories are displayed when clicking the local bar.
+7. Shared normalization between chart aggregation and panel filtering (`TicketInfo.normalizeCategory` and `TicketInfo.normalizePriority`), ensuring category aliases (`in_progress`, `inprogress`, `in-progress`) and empty/None priorities match consistently without disappearing.
+8. Reference-matching Attention Lists:
+   - Repositories needing attention ranked by `attentionScore` covering all reference conditions (`isMerging`, `isRebasing`, `isCherryPicking`, `isDirty`, `behind`, `no upstream`, `ahead`, `stashCount`) with quick "Review" action activating the Git inspector.
+   - Tickets needing attention showing open tickets ranked by age (`daysOpen` descending, oldest first) with reference age badges (`>= 14d` critical red, `>= 5d` stale amber, `< 5d` fresh green), status, priority, and quick "Focus" action.
    - Agent attention queue showing waiting agents with direct terminal focus.
-8. Focus AI-ready context card (`FocusWorkView`) formatting ticket metadata, associated repositories, and active agents with one-click copy to clipboard.
-9. Verified with 1,407 automated checks passing across 35 test suites, including Test 33 and Test 34 covering analytics, chart stats, tag/origin detection, filter navigation, and Focus AI context formatting.
+9. Focus AI-ready context card (`FocusWorkView`) formatting ticket metadata, open duration (`Open: Xd`), associated repositories, and active agents with one-click copy to clipboard.
+10. Verified with 1,462 automated checks passing across 35 test suites, including Test 33 and Test 34 covering analytics, chart stats, tag/origin detection, record-level filter displays, and reference fixture comparison against myOps.
 
 ### 5. Complete the remaining feature parity
 
