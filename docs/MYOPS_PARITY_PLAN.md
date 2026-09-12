@@ -19,7 +19,7 @@ Assume the current `/Users/mac/repos/myops-os` checkout is the reference. Before
 | Repository work | Editor above terminal on the left, repository detail drawer on the right | Persistent center Editor/Diff, bottom SwiftTerm dock, right Context Tools dock | Done (M3) | Center Diff stage; non-blocking diff loading; repo-isolated commits |
 | Changes, stash, worktrees, notes | Sections/actions in repository detail | `GitChangesView` in dock; `StashManagerView`, `WorktreeManagerView`, `RepoNotesView` | Done (M3) | Quick jump menu between Git context tools; Center Diff inspector |
 | Tickets | Workspace page with status/priority/type/project filters and details | `TicketNavigatorView` in Left/Right dock; Jira sync service, per-workspace freshness, and `TicketDetailStageView` | Substantially Complete (M5) | Metadata cards, related repos, per-workspace freshness done; remaining: fine-grained filter audits |
-| Agents | Workspace cards, attention state, repository links, context usage when available | `AgentInspectorView` in dock; Agent process scanner and Herdr socket service | Partial (M5) | Audit metadata, attention state triggers, and session creation parity |
+| Agents | Workspace cards, attention state, repository links, context usage when available | `AgentInspectorView` in dock; `AgentDetailStageView` in Center; privacy-safe session usage scanner and Herdr integration | Done (M5) | Agent cards, context window usage (Claude/Codex), working tree health, notifications, and terminal jump complete |
 | Graph | Interactive graph, dataset selector, neighborhoods, node details | Native graph visualizer in Center Stage; `GraphifyScanner` integration | Partial (M5) | Audit node detail inspection and neighborhood focus native drawing |
 | Status and settings | Refresh freshness, operation history, independent repo/Jira sync, paths and credentials | `WorkbenchStatusBarView`, `SettingsSheetContainer`, Keychain `CredentialStore` | Partial (M5) | Audit settings export/import compatibility |
 
@@ -148,9 +148,10 @@ Candidate packaging, window-size checks, interactive runtime acceptance, daily-w
 2. Jira sync freshness/errors persist per workspace via `WorkspaceStateStore.jiraSyncStatuses` (`JiraSyncStatus(lastSyncDate, lastSyncError)`) and surface as a durable "Synced Xm ago" / "Sync failed" indicator in the ticket navigator, not just a 4-second flash, ensuring independent status across workspaces.
 3. The Ticket Detail stage now shows type/project/labels/dates metadata cards and a "Related Repos" section (branch-name match), matches the reference drawer's Jira/local link behavior (a Jira-cache-only ticket no longer mislabels its link as "Open in Editor"), and displays the actual generated branch name.
 4. Repository attention scoring and reasons centralized directly in `RepoInfo` (`attentionScore` and `attentionReasons`) as the single source of truth, removing duplication between UI views and test assertions.
-5. Test 35 covers date parsing, metadata round-trip, per-workspace freshness/stale isolation across ViewModel instances, and related-repo association. Full suite passes with 1,485 checks across 36 test suites, 0 failed.
+5. Test 35 covers date parsing, metadata round-trip, per-workspace freshness/stale isolation across ViewModel instances, and related-repo association.
+6. Agents Parity delivered: `AgentInfo` enriched with `runtimeSeconds`, `formattedRuntime`, `branch`, `dirty`, `conflicted`, and `AgentUsage` (privacy-safe: model, used/window tokens, context percent, updated timestamp). `AgentScanner` provides tail-reading session usage scanners for Claude and Codex. `AgentInspectorView` adds summary tiles (Running, In Repos, Waiting, Highest Context) and working tree health tags. `AgentDetailStageView` adds context window progress bar, observe-only disclaimer, and Jump to Terminal button. Reference notification format implemented (`agent-wait-PID`). Covered by Test 36 with 1,530 passed checks across 37 test suites.
 
-**Remaining:** Agents (notifications, context usage), Graph (search, neighborhood focus, pan/zoom), Settings (workspace/ticket paths, connection verification, import audit).
+**Remaining:** Graph (search, neighborhood focus, pan/zoom), Settings (workspace/ticket paths, connection verification, import audit).
 
 ### 6. Validate and transition
 

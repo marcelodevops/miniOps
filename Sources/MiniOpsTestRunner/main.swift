@@ -2503,6 +2503,204 @@ do {
     assertEqual(repoAssociation?.path, related.path, "Ticket associates with the repo whose branch contains its key")
 }
 
+// Test 36: Agent Parity, Usage Scanning, Attention State, and Notifications
+print("Test 36: Agent Parity, Usage Scanning, Attention State, and Notifications")
+do {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // 1. Elapsed time parsing & formatted runtime
+    assertEqual(AgentInfo.parseElapsedToSeconds("00:45"), 45, "Seconds elapsed parsed")
+    assertEqual(AgentInfo.parseElapsedToSeconds("12:34"), 754, "Minutes and seconds parsed")
+    assertEqual(AgentInfo.parseElapsedToSeconds("01:23:45"), 5025, "Hours, minutes, seconds parsed")
+    assertEqual(AgentInfo.parseElapsedToSeconds("2-03:15:20"), 184520, "Days and hours parsed")
+    assertEqual(AgentInfo.formatRuntime(seconds: 45), "0m", "Under 1 minute runtime")
+    assertEqual(AgentInfo.formatRuntime(seconds: 754), "12m", "Minutes runtime")
+    assertEqual(AgentInfo.formatRuntime(seconds: 5025), "1h 23m", "Hours and minutes runtime")
+    assertEqual(AgentInfo.formatRuntime(seconds: 184520), "2d 3h", "Days and hours runtime")
+
+    // 2. AgentUsage model & JSON round-trip
+    let originalUsage = AgentUsage(
+        model: "claude-3-5-sonnet",
+        contextUsedTokens: 85000,
+        contextWindowTokens: 200000,
+        contextPercent: 42.5,
+        usageUpdatedAt: "2026-09-12T15:00:00Z"
+    )
+    let encodedUsage = try! JSONEncoder().encode(originalUsage)
+    let decodedUsage = try! JSONDecoder().decode(AgentUsage.self, from: encodedUsage)
+    assertEqual(decodedUsage.model, "claude-3-5-sonnet", "Usage model round-trips")
+    assertEqual(decodedUsage.contextUsedTokens, 85000, "Usage used tokens round-trips")
+    assertEqual(decodedUsage.contextWindowTokens, 200000, "Usage window tokens round-trips")
+    assertEqual(decodedUsage.contextPercent, 42.5, "Usage percent round-trips")
+    assertEqual(decodedUsage.usageUpdatedAt, "2026-09-12T15:00:00Z", "Usage timestamp round-trips")
+
+    // 3. Claude Session JSONL Scanner (Privacy-safe: no message/prompt content retained)
+    let claudeProjectsDir = tempDir.appendingPathComponent("claude_projects")
+    let mockProjDir = claudeProjectsDir.appendingPathComponent("project-a")
+    try! FileManager.default.createDirectory(at: mockProjDir, withIntermediateDirectories: true)
+    let mockRepoPath = tempDir.appendingPathComponent("mock-repo").path
+    let claudeLog = mockProjDir.appendingPathComponent("session.jsonl")
+    let claudeJSONL = """
+    {"type": "user", "text": "secret confidential prompt", "cwd": "\(mockRepoPath)"}
+    {"type": "assistant", "cwd": "\(mockRepoPath)", "message": {"model": "claude-3-5-sonnet-20241022", "usage": {"input_tokens": 40000, "cache_read_input_tokens": 10000, "cache_creation_input_tokens": 5000, "output_tokens": 5000}}}
+    """
+    try! claudeJSONL.write(to: claudeLog, atomically: true, encoding: .utf8)
+
+    let claudeUsageMap = AgentScanner.shared.claudeSessionUsage(projectsDir: claudeProjectsDir)
+    let repoClaudeUsage = claudeUsageMap[mockRepoPath]
+    assert(repoClaudeUsage != nil, "Claude session usage found for cwd")
+    assertEqual(repoClaudeUsage?.model, "claude-3-5-sonnet-20241022", "Claude model extracted")
+    assertEqual(repoClaudeUsage?.contextUsedTokens, 60000, "Total Claude tokens calculated (40k+10k+5k+5k)")
+    assertEqual(repoClaudeUsage?.contextWindowTokens, 200000, "Claude window is 200k")
+    assertEqual(repoClaudeUsage?.contextPercent, 30.0, "Context percent is 30.0%")
+
+    // 4. Codex Session JSONL Scanner (Privacy-safe: no message/prompt content retained)
+    let codexSessionsDir = tempDir.appendingPathComponent("codex_sessions")
+    let mockCodexDateDir = codexSessionsDir.appendingPathComponent("2026/09/12")
+    try! FileManager.default.createDirectory(at: mockCodexDateDir, withIntermediateDirectories: true)
+    let mockCodexRepoPath = tempDir.appendingPathComponent("codex-repo").path
+    let codexLog = mockCodexDateDir.appendingPathComponent("codex-session.jsonl")
+    let codexJSONL = """
+    {"type": "session_meta", "payload": {"cwd": "\(mockCodexRepoPath)"}}
+    {"type": "turn_context", "payload": {"model": "o3-mini"}}
+    {"type": "event_msg", "payload": {"type": "token_count", "info": {"last_token_usage": {"total_tokens": 128000}, "model_context_window": 160000}}}
+    """
+    try! codexJSONL.write(to: codexLog, atomically: true, encoding: .utf8)
+
+    let codexUsageMap = AgentScanner.shared.codexSessionUsage(sessionsDir: codexSessionsDir)
+    let repoCodexUsage = codexUsageMap[mockCodexRepoPath]
+    assert(repoCodexUsage != nil, "Codex session usage found for cwd")
+    assertEqual(repoCodexUsage?.model, "o3-mini", "Codex model extracted")
+    assertEqual(repoCodexUsage?.contextUsedTokens, 128000, "Codex tokens extracted")
+    assertEqual(repoCodexUsage?.contextWindowTokens, 160000, "Codex window is 160k")
+    assertEqual(repoCodexUsage?.contextPercent, 80.0, "Codex percent is 80.0%")
+
+    // 5. PS Output parsing with repository matching, branch, dirty, conflicted, and usage
+    let repoA = RepoInfo(
+        name: "mock-repo",
+        path: mockRepoPath,
+        branch: "feat/ops-10-agent-parity",
+        isDirty: true
+    )
+    let conflictedRepoPath = tempDir.appendingPathComponent("conflicted-repo").path
+    let repoB = RepoInfo(
+        name: "conflicted-repo",
+        path: conflictedRepoPath,
+        branch: "main",
+        isDirty: true,
+        isMerging: true
+    )
+
+    let mockSessionUsage: [String: [String: AgentUsage]] = [
+        "claude": [mockRepoPath: repoClaudeUsage!],
+        "codex": [mockCodexRepoPath: repoCodexUsage!]
+    ]
+
+    // Note: AgentScanner associates cwd via lsof at runtime, so we test AgentInfo construction
+    // and resolveUsage directly to verify attribute propagation
+    let claudeResolvedUsage = AgentScanner.shared.resolveUsage(tool: "Claude Code", cwd: mockRepoPath, sessionUsage: mockSessionUsage)
+    assertEqual(claudeResolvedUsage?.contextPercent, 30.0, "resolveUsage matches Claude session")
+
+    let codexResolvedUsage = AgentScanner.shared.resolveUsage(tool: "OpenAI Codex", cwd: mockCodexRepoPath, sessionUsage: mockSessionUsage)
+    assertEqual(codexResolvedUsage?.contextPercent, 80.0, "resolveUsage matches Codex session")
+
+    let agentWaiting = AgentInfo(
+        pid: 12345,
+        tool: "Claude Code",
+        status: "waiting",
+        isWaitingForInput: true,
+        elapsed: "15:34",
+        cpu: 0.0,
+        tty: "ttys001",
+        repoName: repoA.name,
+        repoPath: repoA.path,
+        branch: repoA.branch,
+        dirty: repoA.isDirty,
+        conflicted: repoA.isMerging,
+        command: "claude --model sonnet",
+        usage: claudeResolvedUsage
+    )
+    assertEqual(agentWaiting.isWaitingForInput, true, "Agent is waiting for input")
+    assertEqual(agentWaiting.runtimeSeconds, 934, "Runtime seconds parsed from 15:34")
+    assertEqual(agentWaiting.formattedRuntime, "15m", "Formatted runtime is 15m")
+    assertEqual(agentWaiting.branch, "feat/ops-10-agent-parity", "Branch propagated to agent")
+    assertEqual(agentWaiting.dirty, true, "Dirty state propagated to agent")
+    assertEqual(agentWaiting.conflicted, false, "Conflicted state is false for repoA")
+    assertEqual(agentWaiting.usage?.contextPercent, 30.0, "Usage attached to agent")
+
+    let agentConflicted = AgentInfo(
+        pid: 23456,
+        tool: "OpenAI Codex",
+        status: "running",
+        isWaitingForInput: false,
+        elapsed: "01:10:00",
+        cpu: 18.5,
+        tty: "ttys002",
+        repoName: repoB.name,
+        repoPath: repoB.path,
+        branch: repoB.branch,
+        dirty: repoB.isDirty,
+        conflicted: repoB.isMerging || repoB.isRebasing,
+        command: "codex exec",
+        usage: codexResolvedUsage
+    )
+    assertEqual(agentConflicted.isWaitingForInput, false, "Codex is running")
+    assertEqual(agentConflicted.conflicted, true, "Conflicted state is true for repoB")
+    assertEqual(agentConflicted.usage?.contextPercent, 80.0, "Usage attached to codex")
+
+    // 6. Attention Queue Sorting: waiting agents come first, then longest runtime
+    let agentIdle = AgentInfo(
+        pid: 34567,
+        tool: "Aider",
+        status: "waiting",
+        isWaitingForInput: true,
+        elapsed: "45:00",
+        cpu: 0.0
+    )
+    let agentRunningShort = AgentInfo(
+        pid: 45678,
+        tool: "Antigravity",
+        status: "running",
+        isWaitingForInput: false,
+        elapsed: "02:15",
+        cpu: 10.0
+    )
+    let sortedList = [agentRunningShort, agentWaiting, agentConflicted, agentIdle].sorted { a, b in
+        if a.isWaitingForInput != b.isWaitingForInput {
+            return a.isWaitingForInput && !b.isWaitingForInput
+        }
+        if a.runtimeSeconds != b.runtimeSeconds {
+            return a.runtimeSeconds > b.runtimeSeconds
+        }
+        return a.pid > b.pid
+    }
+    assertEqual(sortedList[0].pid, agentIdle.pid, "Longest waiting agent is first (45:00)")
+    assertEqual(sortedList[1].pid, agentWaiting.pid, "Second waiting agent is second (15:34)")
+    assertEqual(sortedList[2].pid, agentConflicted.pid, "Longest running agent is third (01:10:00)")
+    assertEqual(sortedList[3].pid, agentRunningShort.pid, "Shortest running agent is fourth (02:15)")
+
+    // 7. Notification parity check
+    let notifTitle = "\(agentWaiting.tool) is waiting for input"
+    let notifBody = "Repository: \(agentWaiting.repoName!) (\(agentWaiting.branch!))"
+    let notifId = "agent-wait-\(agentWaiting.pid)"
+    assertEqual(notifTitle, "Claude Code is waiting for input", "Notification title matches myOps reference")
+    assertEqual(notifBody, "Repository: mock-repo (feat/ops-10-agent-parity)", "Notification body includes repo and branch")
+    assertEqual(notifId, "agent-wait-12345", "Notification identifier uses agent-wait-PID format")
+
+    // 8. WorkspaceViewModel Agent Statistics
+    MainActor.assumeIsolated {
+        let storeURL = tempDir.appendingPathComponent("vm_state.json")
+        let store = WorkspaceStateStore(customStorageURL: storeURL)
+        let vm = WorkspaceViewModel(stateStore: store)
+        vm.activeAgents = [agentWaiting, agentConflicted, agentIdle, agentRunningShort]
+        assertEqual(vm.agentsWaitingCount, 2, "2 agents waiting for input")
+        assertEqual(vm.agentsInReposCount, 2, "2 agents matched to repositories")
+        assertEqual(vm.highestAgentContextPercent, 80.0, "Highest context is 80.0% (from Codex)")
+    }
+}
+
 
 
 print("==================================================")

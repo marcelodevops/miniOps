@@ -360,6 +360,28 @@ public struct BatchGitResult: Sendable {
     }
 }
 
+public struct AgentUsage: Codable, Hashable, Sendable {
+    public let model: String?
+    public let contextUsedTokens: Int?
+    public let contextWindowTokens: Int?
+    public let contextPercent: Double?
+    public let usageUpdatedAt: String?
+
+    public init(
+        model: String? = nil,
+        contextUsedTokens: Int? = nil,
+        contextWindowTokens: Int? = nil,
+        contextPercent: Double? = nil,
+        usageUpdatedAt: String? = nil
+    ) {
+        self.model = model
+        self.contextUsedTokens = contextUsedTokens
+        self.contextWindowTokens = contextWindowTokens
+        self.contextPercent = contextPercent
+        self.usageUpdatedAt = usageUpdatedAt
+    }
+}
+
 public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
     public var id: String { herdrPaneId ?? "\(pid)" }
     public let pid: Int
@@ -367,16 +389,57 @@ public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
     public let status: String // "waiting" or "running"
     public let isWaitingForInput: Bool
     public let elapsed: String
+    public let runtimeSeconds: Int
     public let cpu: Double
     public let tty: String
     public let repoName: String?
     public let repoPath: String?
+    public let branch: String?
+    public let dirty: Bool?
+    public let conflicted: Bool
     public let command: String
+    public let usage: AgentUsage?
     public let herdrPaneId: String?
     public let herdrWorkspaceId: String?
     public let herdrStatus: String?
     public let herdrTerminalTitle: String?
     public let isHerdrManaged: Bool
+
+    public var formattedRuntime: String {
+        Self.formatRuntime(seconds: runtimeSeconds)
+    }
+
+    public static func formatRuntime(seconds: Int) -> String {
+        let s = max(0, seconds)
+        let days = s / 86400
+        let hours = (s % 86400) / 3600
+        let minutes = (s % 3600) / 60
+        if days > 0 { return "\(days)d \(hours)h" }
+        if hours > 0 { return "\(hours)h \(minutes)m" }
+        return "\(minutes)m"
+    }
+
+    public static func parseElapsedToSeconds(_ raw: String) -> Int {
+        let parts = raw.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "-")
+        var days = 0
+        var timeStr = raw
+        if parts.count == 2 {
+            days = Int(parts[0]) ?? 0
+            timeStr = parts[1]
+        }
+        let timeComponents = timeStr.components(separatedBy: ":")
+        if timeComponents.count == 3 {
+            let h = Int(timeComponents[0]) ?? 0
+            let m = Int(timeComponents[1]) ?? 0
+            let s = Int(timeComponents[2]) ?? 0
+            return days * 86400 + h * 3600 + m * 60 + s
+        } else if timeComponents.count == 2 {
+            let m = Int(timeComponents[0]) ?? 0
+            let s = Int(timeComponents[1]) ?? 0
+            return days * 86400 + m * 60 + s
+        }
+        return 0
+    }
 
     public init(
         pid: Int,
@@ -384,11 +447,16 @@ public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
         status: String,
         isWaitingForInput: Bool,
         elapsed: String,
+        runtimeSeconds: Int? = nil,
         cpu: Double = 0.0,
         tty: String = "",
         repoName: String? = nil,
         repoPath: String? = nil,
+        branch: String? = nil,
+        dirty: Bool? = nil,
+        conflicted: Bool = false,
         command: String = "",
+        usage: AgentUsage? = nil,
         herdrPaneId: String? = nil,
         herdrWorkspaceId: String? = nil,
         herdrStatus: String? = nil,
@@ -400,11 +468,16 @@ public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
         self.status = status
         self.isWaitingForInput = isWaitingForInput
         self.elapsed = elapsed
+        self.runtimeSeconds = runtimeSeconds ?? Self.parseElapsedToSeconds(elapsed)
         self.cpu = cpu
         self.tty = tty
         self.repoName = repoName
         self.repoPath = repoPath
+        self.branch = branch
+        self.dirty = dirty
+        self.conflicted = conflicted
         self.command = command
+        self.usage = usage
         self.herdrPaneId = herdrPaneId
         self.herdrWorkspaceId = herdrWorkspaceId
         self.herdrStatus = herdrStatus
@@ -413,7 +486,8 @@ public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case pid, tool, status, isWaitingForInput, elapsed, cpu, tty, repoName, repoPath, command
+        case pid, tool, status, isWaitingForInput, elapsed, runtimeSeconds, cpu, tty
+        case repoName, repoPath, branch, dirty, conflicted, command, usage
         case herdrPaneId, herdrWorkspaceId, herdrStatus, herdrTerminalTitle, isHerdrManaged
     }
 
@@ -423,12 +497,18 @@ public struct AgentInfo: Codable, Identifiable, Hashable, Sendable {
         self.tool = try container.decode(String.self, forKey: .tool)
         self.status = try container.decode(String.self, forKey: .status)
         self.isWaitingForInput = try container.decode(Bool.self, forKey: .isWaitingForInput)
-        self.elapsed = try container.decode(String.self, forKey: .elapsed)
+        let el = try container.decode(String.self, forKey: .elapsed)
+        self.elapsed = el
+        self.runtimeSeconds = try container.decodeIfPresent(Int.self, forKey: .runtimeSeconds) ?? Self.parseElapsedToSeconds(el)
         self.cpu = try container.decodeIfPresent(Double.self, forKey: .cpu) ?? 0.0
         self.tty = try container.decodeIfPresent(String.self, forKey: .tty) ?? ""
         self.repoName = try container.decodeIfPresent(String.self, forKey: .repoName)
         self.repoPath = try container.decodeIfPresent(String.self, forKey: .repoPath)
+        self.branch = try container.decodeIfPresent(String.self, forKey: .branch)
+        self.dirty = try container.decodeIfPresent(Bool.self, forKey: .dirty)
+        self.conflicted = try container.decodeIfPresent(Bool.self, forKey: .conflicted) ?? false
         self.command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
+        self.usage = try container.decodeIfPresent(AgentUsage.self, forKey: .usage)
         self.herdrPaneId = try container.decodeIfPresent(String.self, forKey: .herdrPaneId)
         self.herdrWorkspaceId = try container.decodeIfPresent(String.self, forKey: .herdrWorkspaceId)
         self.herdrStatus = try container.decodeIfPresent(String.self, forKey: .herdrStatus)

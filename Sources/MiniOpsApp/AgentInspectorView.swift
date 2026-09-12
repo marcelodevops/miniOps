@@ -85,6 +85,21 @@ public struct AgentInspectorView: View {
 
             Divider()
 
+            // Agent Summary Tiles
+            HStack(spacing: 6) {
+                summaryTile(title: "Running", value: "\(agents.count)", color: agents.isEmpty ? .secondary : .green)
+                summaryTile(title: "In Repos", value: "\(agents.filter { $0.repoPath != nil }.count)", color: .accentColor)
+                summaryTile(title: "Waiting", value: "\(agents.filter(\.isWaitingForInput).count)", color: agents.contains(where: \.isWaitingForInput) ? .orange : .green)
+                let measured = agents.compactMap { $0.usage?.contextPercent }
+                let highest = measured.isEmpty ? "—" : String(format: "%.0f%%", measured.max()!)
+                summaryTile(title: "Highest Context", value: highest, color: (measured.max() ?? 0) >= 80 ? .red : ((measured.max() ?? 0) >= 60 ? .orange : .secondary))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+
+            Divider()
+
             if filteredAgents.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
@@ -130,7 +145,7 @@ public struct AgentInspectorView: View {
 
                             Spacer()
 
-                            let badgeColor: Color = agent.isWaitingForInput ? .red : (agent.status == "running" ? .green : .blue)
+                            let badgeColor: Color = agent.isWaitingForInput ? .orange : (agent.status == "running" ? .green : .blue)
                             let badgeText: String = agent.isWaitingForInput ? "WAITING FOR INPUT" : agent.status.uppercased()
 
                             Text(badgeText)
@@ -167,7 +182,7 @@ public struct AgentInspectorView: View {
                                 .font(.system(size: 10, design: .monospaced))
                                 .foregroundColor(.secondary)
 
-                            Text("Time: \(agent.elapsed)")
+                            Text("running \(agent.formattedRuntime)")
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
 
@@ -178,14 +193,52 @@ public struct AgentInspectorView: View {
                             }
                         }
 
-                        // Repo path and focus buttons
+                        // Context usage badge
+                        if let usage = agent.usage, let pct = usage.contextPercent {
+                            HStack(spacing: 6) {
+                                Text(String(format: "%.0f%% context", pct))
+                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill((pct >= 80 ? Color.red : (pct >= 60 ? Color.orange : Color.secondary)).opacity(0.18)))
+                                    .foregroundColor(pct >= 80 ? .red : (pct >= 60 ? .orange : .primary))
+                                if let model = usage.model {
+                                    Text(model)
+                                        .font(.system(size: 9))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
+
+                        // Repo path, branch, health, and focus buttons
                         HStack(spacing: 6) {
                             if let repo = agent.repoName {
                                 HStack(spacing: 4) {
                                     Image(systemName: "folder")
                                         .font(.system(size: 10))
                                     Text(repo)
-                                        .font(.system(size: 11, weight: .medium))
+                                        .font(.system(size: 11, weight: .bold))
+                                    if let branch = agent.branch {
+                                        Text("· ⎇ \(branch)")
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    if agent.conflicted {
+                                        Text("conflict")
+                                            .font(.system(size: 8, weight: .bold))
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 1)
+                                            .background(Capsule().fill(Color.red.opacity(0.2)))
+                                            .foregroundColor(.red)
+                                    } else if agent.dirty == true {
+                                        Text("dirty")
+                                            .font(.system(size: 8, weight: .bold))
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 1)
+                                            .background(Capsule().fill(Color.orange.opacity(0.2)))
+                                            .foregroundColor(.orange)
+                                    }
                                 }
                                 .foregroundColor(.accentColor)
                             }
@@ -201,11 +254,20 @@ public struct AgentInspectorView: View {
                             }
 
                             if let path = agent.repoPath {
-                                Button("Focus Repo") {
-                                    onSelectRepo(path)
+                                if agent.isWaitingForInput {
+                                    Button("⚡ Terminal") {
+                                        onSelectRepo(path)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                    .font(.system(size: 10, weight: .semibold))
+                                } else {
+                                    Button("Focus Repo") {
+                                        onSelectRepo(path)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .font(.system(size: 10, weight: .semibold))
                                 }
-                                .buttonStyle(.borderless)
-                                .font(.system(size: 10, weight: .semibold))
                             }
 
                             if agent.isHerdrManaged, let pane = agent.herdrPaneId {
@@ -285,6 +347,23 @@ public struct AgentInspectorView: View {
                 self.isRefreshingStatus = false
             }
         }
+    }
+
+    private func summaryTile(title: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .foregroundColor(color)
+            Text(title)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(5)
     }
 }
 

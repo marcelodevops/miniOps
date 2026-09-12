@@ -604,6 +604,19 @@ public final class WorkspaceViewModel: ObservableObject {
         }
     }
 
+    public var agentsWaitingCount: Int {
+        activeAgents.filter { $0.isWaitingForInput }.count
+    }
+
+    public var agentsInReposCount: Int {
+        activeAgents.filter { $0.repoPath != nil }.count
+    }
+
+    public var highestAgentContextPercent: Double? {
+        let measured = activeAgents.compactMap { $0.usage?.contextPercent }
+        return measured.isEmpty ? nil : measured.max()
+    }
+
     public func refreshAgents() {
         let repos = repositories
         DispatchQueue.global(qos: .utility).async { [weak self, agentScanner] in
@@ -613,9 +626,21 @@ public final class WorkspaceViewModel: ObservableObject {
                 self.activeAgents = agents
                 for agent in agents where agent.isWaitingForInput {
                     if !self.previouslyNotifiedWaitingPIDs.contains(agent.pid) {
+                        let bodyText: String
+                        if let repoName = agent.repoName {
+                            if let branch = agent.branch, !branch.isEmpty {
+                                bodyText = "Repository: \(repoName) (\(branch))"
+                            } else {
+                                bodyText = "Repository: \(repoName)"
+                            }
+                        } else {
+                            bodyText = "PID \(agent.pid)"
+                        }
                         NotificationService.shared.sendNotification(
-                            title: "\(agent.tool) May Need Attention",
-                            body: "Appears idle in \(agent.repoName ?? "terminal")")
+                            title: "\(agent.tool) is waiting for input",
+                            body: bodyText,
+                            identifier: "agent-wait-\(agent.pid)"
+                        )
                     }
                 }
                 self.previouslyNotifiedWaitingPIDs = Set(agents.filter { $0.isWaitingForInput }.map { $0.pid })
