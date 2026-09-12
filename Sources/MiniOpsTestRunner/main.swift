@@ -2071,7 +2071,146 @@ do {
     }
 }
 
+// Test 34: Overview Analytics, Reference Charts, Tags/Origin Detection, and Focus AI Context
+print("Test 34: Overview Analytics, Reference Charts, Tags/Origin Detection, and Focus AI Context")
+do {
+    let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+    let repo1URL = tempRoot.appendingPathComponent("k8s-cluster-helm")
+    let repo2URL = tempRoot.appendingPathComponent("cloud-terraform-infra")
+    try! FileManager.default.createDirectory(at: repo1URL, withIntermediateDirectories: true)
+    try! FileManager.default.createDirectory(at: repo2URL, withIntermediateDirectories: true)
+
+    _ = runGit(args: ["init", "-b", "main"], in: repo1URL.path)
+    _ = runGit(args: ["config", "user.name", "miniOps Test"], in: repo1URL.path)
+    _ = runGit(args: ["config", "user.email", "test@example.com"], in: repo1URL.path)
+    _ = runGit(args: ["config", "commit.gpgsign", "false"], in: repo1URL.path)
+    _ = runGit(args: ["remote", "add", "origin", "https://github.com/myorg/k8s-cluster-helm.git"], in: repo1URL.path)
+    try! "apiVersion: v2\nname: test-chart".write(to: repo1URL.appendingPathComponent("Chart.yaml"), atomically: true, encoding: .utf8)
+    _ = runGit(args: ["add", "Chart.yaml"], in: repo1URL.path)
+    _ = runGit(args: ["commit", "-m", "init helm"], in: repo1URL.path)
+
+    _ = runGit(args: ["init", "-b", "feat/INFRA-500"], in: repo2URL.path)
+    _ = runGit(args: ["config", "user.name", "miniOps Test"], in: repo2URL.path)
+    _ = runGit(args: ["config", "user.email", "test@example.com"], in: repo2URL.path)
+    _ = runGit(args: ["config", "commit.gpgsign", "false"], in: repo2URL.path)
+    _ = runGit(args: ["remote", "add", "origin", "git@gitlab.com:myorg/cloud-infra.git"], in: repo2URL.path)
+    try! "terraform {}\n".write(to: repo2URL.appendingPathComponent("main.tf"), atomically: true, encoding: .utf8)
+    _ = runGit(args: ["add", "main.tf"], in: repo2URL.path)
+    _ = runGit(args: ["commit", "-m", "init tf"], in: repo2URL.path)
+    // Make repo2 dirty
+    try! "# modified\n".write(to: repo2URL.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+
+    let scannedRepos = WorkspaceScanner.shared.scan(rootPath: tempRoot.path)
+    assertEqual(scannedRepos.count, 2, "Scans both repositories in the workspace")
+
+    let r1 = scannedRepos.first(where: { $0.name == "k8s-cluster-helm" })
+    assert(r1 != nil, "Found k8s repo")
+    assert(r1?.tags.contains("k8s") == true, "Tags detect k8s from repo name")
+    assert(r1?.tags.contains("helm") == true, "Tags detect helm from Chart.yaml")
+    assertEqual(r1?.origin, "github", "Origin detected as github")
+
+    let r2 = scannedRepos.first(where: { $0.name == "cloud-terraform-infra" })
+    assert(r2 != nil, "Found terraform repo")
+    assert(r2?.tags.contains("terraform") == true, "Tags detect terraform from main.tf")
+    assertEqual(r2?.origin, "gitlab", "Origin detected as gitlab")
+    assert(r2?.isDirty == true, "Detects dirty working tree")
+
+    // Test JSON backward compatibility for RepoInfo
+    let legacyJSON = """
+    {
+        "name": "legacy-repo",
+        "path": "/tmp/legacy",
+        "branch": "main",
+        "isDirty": false,
+        "ahead": 0,
+        "behind": 0,
+        "changedFiles": []
+    }
+    """.data(using: .utf8)!
+    let decodedRepo = try? JSONDecoder().decode(RepoInfo.self, from: legacyJSON)
+    assert(decodedRepo != nil, "Legacy RepoInfo JSON decodes successfully without tags or origin")
+    assertEqual(decodedRepo?.tags ?? ["dummy"], [], "Missing tags default to empty array")
+    assertEqual(decodedRepo?.origin, nil, "Missing origin defaults to nil")
+
+    // Test WorkspaceViewModel analytics and filter navigation
+    let storeURL = tempRoot.appendingPathComponent("analytics-state.json")
+    let store = WorkspaceStateStore(customStorageURL: storeURL)
+    store.saveWorkspacePath(tempRoot.path)
+
+    let t1 = TicketInfo(key: "INFRA-500", summary: "Upgrade cluster ingress", status: "In Progress", statusCategory: "in_progress", priority: "High", isOpen: true)
+    let t2 = TicketInfo(key: "OPS-600", summary: "Rotate credentials", status: "To Do", statusCategory: "todo", priority: "Medium", isOpen: true)
+    let t3 = TicketInfo(key: "OPS-400", summary: "Documentation update", status: "Done", statusCategory: "done", priority: "Low", isOpen: false)
+
+    MainActor.assumeIsolated {
+        let viewModel = WorkspaceViewModel(stateStore: store)
+        viewModel.repositories = scannedRepos
+        viewModel.tickets = [t1, t2, t3]
+        viewModel.activeAgents = [
+            AgentInfo(
+                pid: 5555,
+                tool: "TerraformAgent",
+                status: "waiting",
+                isWaitingForInput: true,
+                elapsed: "3m",
+                repoPath: repo2URL.path
+            )
+        ]
+
+        // Check ticketsByCategory
+        let catStats = viewModel.ticketsByCategory
+        assertEqual(catStats.first(where: { $0.category == "In Progress" })?.count, 1, "Category In Progress count matches")
+        assertEqual(catStats.first(where: { $0.category == "To Do" })?.count, 1, "Category To Do count matches")
+        assertEqual(catStats.first(where: { $0.category == "Done" })?.count, 1, "Category Done count matches")
+
+        // Check ticketsByPriority
+        let prioStats = viewModel.ticketsByPriority
+        assertEqual(prioStats.first(where: { $0.priority == "High" })?.count, 1, "Priority High count matches")
+        assertEqual(prioStats.first(where: { $0.priority == "Medium" })?.count, 1, "Priority Medium count matches")
+        assertEqual(prioStats.first(where: { $0.priority == "Low" })?.count, 1, "Priority Low count matches")
+
+        // Check reposByType
+        let typeStats = viewModel.reposByType
+        assert(typeStats.contains(where: { $0.tag == "k8s" && $0.count == 1 }), "reposByType includes k8s")
+        assert(typeStats.contains(where: { $0.tag == "terraform" && $0.count == 1 }), "reposByType includes terraform")
+
+        // Check reposByOrigin
+        let originStats = viewModel.reposByOrigin
+        assert(originStats.contains(where: { $0.origin == "github" && $0.count == 1 }), "reposByOrigin includes github")
+        assert(originStats.contains(where: { $0.origin == "gitlab" && $0.count == 1 }), "reposByOrigin includes gitlab")
+
+        // Check interactive chart navigation
+        viewModel.showTickets(filter: .category("In Progress"))
+        assertEqual(viewModel.ticketPanelFilter, .category("In Progress"), "Category filter applied to tickets")
+        assertEqual(viewModel.workbenchLayout.activeLeftTab, .tickets, "Navigates to tickets panel")
+
+        viewModel.showTickets(filter: .priority("High"))
+        assertEqual(viewModel.ticketPanelFilter, .priority("High"), "Priority filter applied to tickets")
+
+        viewModel.showRepositories(filter: .tag("k8s"))
+        assertEqual(viewModel.repositoryPanelFilter, .tag("k8s"), "Tag filter applied to repos")
+        assertEqual(viewModel.workbenchLayout.activeLeftTab, .repos, "Navigates to repos panel")
+
+        viewModel.showRepositories(filter: .origin("github"))
+        assertEqual(viewModel.repositoryPanelFilter, .origin("github"), "Origin filter applied to repos")
+
+        // Check Focus AI Context snapshot
+        let snapshot = viewModel.aiContextSnapshot(for: t1)
+        assert(snapshot.contains("Ticket: INFRA-500"), "AI snapshot contains ticket key")
+        assert(snapshot.contains("Upgrade cluster ingress"), "AI snapshot contains summary")
+        assert(snapshot.contains("Priority: High"), "AI snapshot contains priority")
+        assert(snapshot.contains("Repositories (1):"), "AI snapshot associates 1 repository via branch feat/INFRA-500")
+        assert(snapshot.contains("cloud-terraform-infra"), "AI snapshot names associated repository")
+        assert(snapshot.contains("Agents (1):"), "AI snapshot associates 1 agent from repository")
+        assert(snapshot.contains("TerraformAgent"), "AI snapshot includes agent tool name")
+        assert(snapshot.contains("waiting for input"), "AI snapshot includes agent state")
+    }
+}
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")
 if failedCount > 0 { exit(1) }
+

@@ -25,6 +25,8 @@ public struct RepoInfo: Codable, Identifiable, Hashable, Sendable {
     public var ahead: Int
     public var behind: Int
     public var changedFiles: [GitFileChange]
+    public var tags: [String]
+    public var origin: String?
 
     public init(
         name: String,
@@ -34,7 +36,9 @@ public struct RepoInfo: Codable, Identifiable, Hashable, Sendable {
         isDirty: Bool = false,
         ahead: Int = 0,
         behind: Int = 0,
-        changedFiles: [GitFileChange] = []
+        changedFiles: [GitFileChange] = [],
+        tags: [String] = [],
+        origin: String? = nil
     ) {
         self.name = name
         self.path = path
@@ -44,6 +48,26 @@ public struct RepoInfo: Codable, Identifiable, Hashable, Sendable {
         self.ahead = ahead
         self.behind = behind
         self.changedFiles = changedFiles
+        self.tags = tags
+        self.origin = origin
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, path, groupName, branch, isDirty, ahead, behind, changedFiles, tags, origin
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.path = try container.decode(String.self, forKey: .path)
+        self.groupName = try container.decodeIfPresent(String.self, forKey: .groupName)
+        self.branch = try container.decodeIfPresent(String.self, forKey: .branch) ?? "main"
+        self.isDirty = try container.decodeIfPresent(Bool.self, forKey: .isDirty) ?? false
+        self.ahead = try container.decodeIfPresent(Int.self, forKey: .ahead) ?? 0
+        self.behind = try container.decodeIfPresent(Int.self, forKey: .behind) ?? 0
+        self.changedFiles = try container.decodeIfPresent([GitFileChange].self, forKey: .changedFiles) ?? []
+        self.tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        self.origin = try container.decodeIfPresent(String.self, forKey: .origin)
     }
 }
 
@@ -136,14 +160,18 @@ public enum WorkbenchPanel: String, Codable, CaseIterable, Sendable {
     case notes = "Notes"
 }
 
-public enum RepositoryPanelFilter: String, Codable, Sendable {
+public enum RepositoryPanelFilter: Hashable, Codable, Sendable {
     case all
     case dirty
+    case tag(String)
+    case origin(String)
 }
 
-public enum TicketPanelFilter: String, Codable, Sendable {
+public enum TicketPanelFilter: Hashable, Codable, Sendable {
     case all
     case open
+    case category(String)
+    case priority(String)
 }
 
 public enum AgentPanelFilter: String, Codable, Sendable {

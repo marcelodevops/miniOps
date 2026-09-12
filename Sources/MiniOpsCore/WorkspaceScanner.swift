@@ -77,9 +77,44 @@ public final class WorkspaceScanner: @unchecked Sendable {
         return makeRepoRecord(url: url, group: group)
     }
 
+    public static func detectRepoTags(url: URL) -> [String] {
+        let name = url.lastPathComponent.lowercased()
+        var tags = Set<String>()
+        let nameTags: [(token: String, tag: String)] = [
+            ("istio", "istio"), ("argocd", "argocd"), ("grafana", "grafana"),
+            ("mcp", "mcp"), ("rke2", "k8s"), ("eks", "k8s"), ("kubernetes", "k8s"),
+            ("k8s", "k8s"), ("cicd", "cicd"), ("github-actions", "cicd"),
+            ("terraform", "terraform"), ("helm", "helm"), ("chart", "helm"),
+            ("load-testing", "testing"), ("skills", "skills")
+        ]
+        for (token, tag) in nameTags {
+            if name.contains(token) {
+                tags.insert(tag)
+            }
+        }
+        if let topFiles = try? FileManager.default.contentsOfDirectory(atPath: url.path) {
+            let lowerFiles = Set(topFiles.map { $0.lowercased() })
+            if lowerFiles.contains(where: { $0.hasSuffix(".tf") }) {
+                tags.insert("terraform")
+            }
+            if lowerFiles.contains("chart.yaml") {
+                tags.insert("helm")
+            }
+            if lowerFiles.contains("dockerfile") || lowerFiles.contains(where: { $0.hasPrefix("dockerfile") }) {
+                tags.insert("docker")
+            }
+            if lowerFiles.contains("package.swift") {
+                tags.insert("swift")
+            }
+        }
+        return tags.isEmpty ? ["other"] : tags.sorted()
+    }
+
     private func makeRepoRecord(url: URL, group: String?) -> RepoInfo {
         let resolved = url.resolvingSymlinksInPath()
         let (branch, isDirty, ahead, behind, changes) = gitService.getRepoStatus(repoPath: resolved.path)
+        let origin = gitService.getRemoteOriginType(repoPath: resolved.path)
+        let tags = Self.detectRepoTags(url: resolved)
         return RepoInfo(
             name: resolved.lastPathComponent,
             path: resolved.path,
@@ -88,7 +123,9 @@ public final class WorkspaceScanner: @unchecked Sendable {
             isDirty: isDirty,
             ahead: ahead,
             behind: behind,
-            changedFiles: changes
+            changedFiles: changes,
+            tags: tags,
+            origin: origin
         )
     }
 }

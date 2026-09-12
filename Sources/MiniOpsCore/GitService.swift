@@ -656,6 +656,14 @@ extension GitService {
         return url.isEmpty ? nil : url
     }
 
+    public func getRemoteOriginType(repoPath: String) -> String? {
+        guard let url = getRemoteURL(repoPath: repoPath)?.lowercased() else { return nil }
+        if url.contains("github") { return "github" }
+        if url.contains("bitbucket") { return "bitbucket" }
+        if url.contains("gitlab") { return "gitlab" }
+        return "other"
+    }
+
     public static func parseRemoteWebURL(_ raw: String) -> URL? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }

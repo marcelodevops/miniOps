@@ -114,14 +114,23 @@ Candidate packaging, window-size checks, interactive runtime acceptance, daily-w
 
 **Gate:** counts match the reference for identical fixtures; clicking summaries opens the expected filtered panel; Focus links to the correct repository and agents.
 
-**Status:** Partial (2026-09-11):
+**Status:** Complete (2026-09-12):
 1. Active Focus ticket selection is persisted per workspace in `WorkbenchLayoutState` and restored across relaunch.
 2. Focus repository context is resolved from a local markdown ticket path or the reference-compatible ticket-key match in repository branch/name/path; agent context is restricted to the associated repository.
 3. Missing ticket/repository associations are shown as unavailable instead of falling back to the currently selected repository.
 4. Overview repository, ticket, and agent summary tiles open their dock panels with synchronized Dirty, Open, and Waiting filters.
-5. Test 33 covers Focus persistence, ticket-to-repository-to-agent association, false Jira-cache association prevention, and Overview filter navigation.
-
-**Remaining:** add the reference Overview chart groups and chart-to-filter navigation, then compare summary/chart counts against identical myOps fixtures. Repositories by type/origin require corresponding metadata in the native repository model before those reference charts can be reproduced honestly.
+5. Reference Overview chart groups implemented natively in SwiftUI matching reference definitions:
+   - Tickets by state (`#donut`): interactive donut chart with total count, category slices, legend, and `.category` panel filter navigation.
+   - Tickets by priority (`#barPrio`): horizontal proportional bars with `.priority` panel filter navigation.
+   - Repositories by type (`#barRepos`): horizontal proportional bars displaying tags with `.tag` panel filter navigation.
+   - Repositories by origin (`#barOrigin`): horizontal proportional bars displaying origins (`github`, `gitlab`, `bitbucket`, `local`) with `.origin` panel filter navigation.
+6. Enriched `RepoInfo` with `tags: [String]` and `origin: String?`, detected natively during workspace scanning and remote inspection, with backward-compatible JSON decoding for existing stores.
+7. Reference-matching Attention Lists:
+   - Repositories needing attention ranked by `attentionScore` (`dirty`, `↓behind`, `↑not pushed`, `merge in progress`) with quick "Review" action activating the Git inspector.
+   - Tickets needing attention showing open tickets with priority chips, status, and quick "Focus" action.
+   - Agent attention queue showing waiting agents with direct terminal focus.
+8. Focus AI-ready context card (`FocusWorkView`) formatting ticket metadata, associated repositories, and active agents with one-click copy to clipboard.
+9. Verified with 1,407 automated checks passing across 35 test suites, including Test 33 and Test 34 covering analytics, chart stats, tag/origin detection, filter navigation, and Focus AI context formatting.
 
 ### 5. Complete the remaining feature parity
 

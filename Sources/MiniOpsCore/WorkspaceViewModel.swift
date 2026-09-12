@@ -367,6 +367,103 @@ public final class WorkspaceViewModel: ObservableObject {
         showPanel(.agents)
     }
 
+    public func repositories(for ticket: TicketInfo) -> [RepoInfo] {
+        if let repo = repository(for: ticket) {
+            return [repo]
+        }
+        return []
+    }
+
+    public var reposByType: [(tag: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for repo in repositories {
+            let tags = repo.tags.isEmpty ? ["other"] : repo.tags
+            for tag in tags {
+                counts[tag, default: 0] += 1
+            }
+        }
+        return counts.sorted { a, b in
+            if a.value == b.value { return a.key < b.key }
+            return a.value > b.value
+        }.map { (tag: $0.key, count: $0.value) }
+    }
+
+    public var reposByOrigin: [(origin: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for repo in repositories {
+            if let origin = repo.origin, !origin.isEmpty {
+                counts[origin, default: 0] += 1
+            } else {
+                counts["local", default: 0] += 1
+            }
+        }
+        return counts.sorted { a, b in
+            if a.value == b.value { return a.key < b.key }
+            return a.value > b.value
+        }.map { (origin: $0.key, count: $0.value) }
+    }
+
+    public var ticketsByCategory: [(category: String, count: Int)] {
+        var counts: [String: Int] = [
+            "To Do": 0,
+            "In Progress": 0,
+            "Done": 0
+        ]
+        for ticket in tickets {
+            let cat: String
+            switch ticket.statusCategory.lowercased() {
+            case "done": cat = "Done"
+            case "in_progress", "inprogress": cat = "In Progress"
+            default: cat = "To Do"
+            }
+            counts[cat, default: 0] += 1
+        }
+        return ["To Do", "In Progress", "Done"].map { (category: $0, count: counts[$0] ?? 0) }
+    }
+
+    public var ticketsByPriority: [(priority: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for ticket in tickets {
+            let p = ticket.priority.isEmpty ? "None" : ticket.priority
+            counts[p, default: 0] += 1
+        }
+        let order = ["Highest", "High", "Medium", "Low", "Lowest", "None"]
+        return counts.sorted { a, b in
+            let idxA = order.firstIndex(of: a.key) ?? 99
+            let idxB = order.firstIndex(of: b.key) ?? 99
+            if idxA == idxB { return a.key < b.key }
+            return idxA < idxB
+        }.map { (priority: $0.key, count: $0.value) }
+    }
+
+    public func aiContextSnapshot(for ticket: TicketInfo) -> String {
+        let repos = repositories(for: ticket)
+        let matchingAgents = agents(for: ticket)
+        var lines = [
+            "Ticket: \(ticket.key) · \(ticket.summary)",
+            "Status: \(ticket.status) · Priority: \(ticket.priority)",
+            ""
+        ]
+        lines.append("Repositories (\(repos.count)):")
+        if repos.isEmpty {
+            lines.append("- (No repository match inferred)")
+        } else {
+            for r in repos {
+                lines.append("- \(r.name) · \(r.branch) · \(r.isDirty ? "dirty" : "clean")")
+            }
+        }
+        lines.append("")
+        lines.append("Agents (\(matchingAgents.count)):")
+        if matchingAgents.isEmpty {
+            lines.append("- (No active agents detected)")
+        } else {
+            for a in matchingAgents {
+                lines.append("- \(a.tool) · \(a.isWaitingForInput ? "waiting for input" : "running")\(a.repoName.map { " · \($0)" } ?? "")")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     public func selectAgent(_ agent: AgentInfo) {
         self.selectedAgent = agent
         selectCenterTab(.agent)
@@ -382,7 +479,8 @@ public final class WorkspaceViewModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self, gitService] in
             let (branch, isDirty, ahead, behind, changes) = gitService.getRepoStatus(repoPath: repo.path)
             let updated = RepoInfo(name: repo.name, path: repo.path, groupName: repo.groupName,
-                                   branch: branch, isDirty: isDirty, ahead: ahead, behind: behind, changedFiles: changes)
+                                   branch: branch, isDirty: isDirty, ahead: ahead, behind: behind, changedFiles: changes,
+                                   tags: repo.tags, origin: repo.origin)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if self.selectedRepo?.path == repo.path {

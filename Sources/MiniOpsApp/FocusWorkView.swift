@@ -78,6 +78,9 @@ public struct FocusWorkView: View {
 
                     // 3. Connected Agent Card
                     connectedAgentCard(ticket: ticket)
+
+                    // 4. AI-Ready Context Card
+                    aiContextCard(ticket: ticket)
                 } else {
                     emptyState
                 }
@@ -269,6 +272,51 @@ public struct FocusWorkView: View {
                 }
             }
         }
+    }
+
+    private func aiContextCard(ticket: TicketInfo) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("AI-READY CONTEXT")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.secondary)
+                    Text("A compact, privacy-safe snapshot to use when asking an agent for the next step.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Button(action: {
+                    let snapshot = viewModel.aiContextSnapshot(for: ticket)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(snapshot, forType: .string)
+                    actionFeedback = "Copied context snapshot to clipboard."
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.on.doc")
+                        Text("Copy Context")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
+            }
+
+            let snapshot = viewModel.aiContextSnapshot(for: ticket)
+            Text(snapshot)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.primary)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(NSColor.textBackgroundColor))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+                )
+        }
+        .padding(12)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
     }
 
     private var emptyState: some View {

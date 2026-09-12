@@ -361,7 +361,14 @@ public struct MainWindowView: View {
         switch panel {
             case .repos:
                 let visibleRepositories = viewModel.repositories.filter { repo in
-                    let matchesMode = viewModel.repositoryPanelFilter == .all || repo.isDirty
+                    let matchesMode: Bool = {
+                        switch viewModel.repositoryPanelFilter {
+                        case .all: return true
+                        case .dirty: return repo.isDirty
+                        case .tag(let t): return repo.tags.contains(t)
+                        case .origin(let o): return repo.origin?.lowercased() == o.lowercased()
+                        }
+                    }()
                     let matchesSearch = repositorySearch.isEmpty
                         || repo.name.localizedCaseInsensitiveContains(repositorySearch)
                         || (repo.groupName?.localizedCaseInsensitiveContains(repositorySearch) ?? false)
@@ -393,6 +400,34 @@ public struct MainWindowView: View {
                     .padding(.horizontal, 10)
                     .padding(.top, 6)
                     .padding(.bottom, 2)
+
+                    if case .tag(let t) = viewModel.repositoryPanelFilter {
+                        HStack(spacing: 4) {
+                            Text("Type: \(t)")
+                                .font(.system(size: 10, weight: .semibold))
+                            Button(action: { viewModel.repositoryPanelFilter = .all }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.borderless)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 2)
+                    } else if case .origin(let o) = viewModel.repositoryPanelFilter {
+                        HStack(spacing: 4) {
+                            Text("Origin: \(o)")
+                                .font(.system(size: 10, weight: .semibold))
+                            Button(action: { viewModel.repositoryPanelFilter = .all }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.borderless)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 2)
+                    }
 
                     TextField("Find a repository…", text: $repositorySearch)
                         .textFieldStyle(.roundedBorder)
@@ -431,27 +466,71 @@ public struct MainWindowView: View {
                 }
 
             case .tickets:
-                TicketNavigatorView(
-                    tickets: viewModel.tickets,
-                    selectedRepoPath: viewModel.selectedRepo?.path,
-                    isExpanded: $isTicketNavigatorExpanded,
-                    openOnly: Binding(
-                        get: { viewModel.ticketPanelFilter == .open },
-                        set: { viewModel.ticketPanelFilter = $0 ? .open : .all }
-                    ),
-                    isSyncing: viewModel.isSyncingTickets,
-                    syncStatus: viewModel.ticketSyncStatus,
-                    onSelectTicket: { ticket in
-                        viewModel.selectTicket(ticket)
-                    },
-                    onCreateBranch: { ticket in
-                        viewModel.createBranchForTicket(ticket)
-                    },
-                    onRefresh: {
-                        viewModel.syncJiraTickets()
+                let filteredTickets = viewModel.tickets.filter { ticket in
+                    switch viewModel.ticketPanelFilter {
+                    case .all: return true
+                    case .open: return ticket.isOpen
+                    case .category(let c):
+                        return ticket.statusCategory.localizedCaseInsensitiveCompare(c) == .orderedSame
+                            || (c == "In Progress" && ticket.statusCategory.lowercased() == "in_progress")
+                            || (c == "To Do" && ticket.statusCategory.lowercased() == "todo")
+                            || ticket.status.localizedCaseInsensitiveCompare(c) == .orderedSame
+                    case .priority(let p):
+                        return ticket.priority.localizedCaseInsensitiveCompare(p) == .orderedSame
                     }
-                )
-                .frame(maxHeight: .infinity)
+                }
+
+                VStack(spacing: 0) {
+                    if case .category(let c) = viewModel.ticketPanelFilter {
+                        HStack(spacing: 4) {
+                            Text("State: \(c)")
+                                .font(.system(size: 10, weight: .semibold))
+                            Button(action: { viewModel.ticketPanelFilter = .all }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.borderless)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.top, 4)
+                    } else if case .priority(let p) = viewModel.ticketPanelFilter {
+                        HStack(spacing: 4) {
+                            Text("Priority: \(p)")
+                                .font(.system(size: 10, weight: .semibold))
+                            Button(action: { viewModel.ticketPanelFilter = .all }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.borderless)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.top, 4)
+                    }
+
+                    TicketNavigatorView(
+                        tickets: filteredTickets,
+                        selectedRepoPath: viewModel.selectedRepo?.path,
+                        isExpanded: $isTicketNavigatorExpanded,
+                        openOnly: Binding(
+                            get: { viewModel.ticketPanelFilter == .open },
+                            set: { viewModel.ticketPanelFilter = $0 ? .open : .all }
+                        ),
+                        isSyncing: viewModel.isSyncingTickets,
+                        syncStatus: viewModel.ticketSyncStatus,
+                        onSelectTicket: { ticket in
+                            viewModel.selectTicket(ticket)
+                        },
+                        onCreateBranch: { ticket in
+                            viewModel.createBranchForTicket(ticket)
+                        },
+                        onRefresh: {
+                            viewModel.syncJiraTickets()
+                        }
+                    )
+                    .frame(maxHeight: .infinity)
+                }
             case .changes:
                 if let repo = viewModel.selectedRepo {
                     GitChangesView(
