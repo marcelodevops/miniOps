@@ -509,8 +509,8 @@ public struct OverviewDashboardView: View {
     private var dirtyReposSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             let attentionRepos = viewModel.repositories
-                .filter { attentionScore(for: $0) > 0 }
-                .sorted { attentionScore(for: $0) > attentionScore(for: $1) }
+                .filter { $0.attentionScore > 0 }
+                .sorted { $0.attentionScore > $1.attentionScore }
 
             HStack {
                 Text("REPOSITORIES NEEDING ATTENTION")
@@ -545,7 +545,7 @@ public struct OverviewDashboardView: View {
                                 Text(repo.name)
                                     .font(.system(size: 11, weight: .bold))
                                 HStack(spacing: 4) {
-                                    ForEach(attentionReasons(for: repo), id: \.self) { reason in
+                                    ForEach(repo.attentionReasons, id: \.self) { reason in
                                         let isWarn = reason.contains("dirty") || reason.contains("merge") || reason.contains("rebase") || reason.contains("cherry-pick") || reason.contains("behind")
                                         Text(reason)
                                             .font(.system(size: 9, weight: .semibold))
@@ -579,29 +579,6 @@ public struct OverviewDashboardView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func attentionScore(for repo: RepoInfo) -> Int {
-        var score = 0
-        if repo.isMerging || repo.isRebasing || repo.isCherryPicking { score += 100 }
-        if repo.isDirty { score += 10 }
-        if repo.hasUpstream && repo.behind > 0 { score += 5 + repo.behind }
-        if !repo.hasUpstream { score += 3 }
-        if repo.hasUpstream && repo.ahead > 0 { score += 1 }
-        if repo.stashCount > 0 { score += 1 }
-        return score
-    }
-
-    private func attentionReasons(for repo: RepoInfo) -> [String] {
-        var reasons: [String] = []
-        if repo.isMerging { reasons.append("merge in progress") }
-        if repo.isRebasing { reasons.append("rebase in progress") }
-        if repo.isCherryPicking { reasons.append("cherry-pick in progress") }
-        if repo.isDirty { reasons.append("dirty") }
-        if repo.hasUpstream && repo.behind > 0 { reasons.append("↓\(repo.behind) behind") }
-        if !repo.hasUpstream { reasons.append("no upstream") }
-        if repo.hasUpstream && repo.ahead > 0 { reasons.append("↑\(repo.ahead) not pushed") }
-        if repo.stashCount > 0 { reasons.append("\(repo.stashCount) stashed") }
-        return reasons
-    }
 
     private var attentionTicketsSection: some View {
         VStack(alignment: .leading, spacing: 10) {

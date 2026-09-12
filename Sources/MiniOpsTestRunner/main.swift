@@ -2376,30 +2376,6 @@ do {
             )
         ]
 
-        func computeScore(for r: RepoInfo) -> Int {
-            var score = 0
-            if r.isMerging || r.isRebasing || r.isCherryPicking { score += 100 }
-            if r.isDirty { score += 10 }
-            if r.hasUpstream && r.behind > 0 { score += 5 + r.behind }
-            if !r.hasUpstream { score += 3 }
-            if r.hasUpstream && r.ahead > 0 { score += 1 }
-            if r.stashCount > 0 { score += 1 }
-            return score
-        }
-
-        func computeReasons(for r: RepoInfo) -> [String] {
-            var reasons: [String] = []
-            if r.isMerging { reasons.append("merge in progress") }
-            if r.isRebasing { reasons.append("rebase in progress") }
-            if r.isCherryPicking { reasons.append("cherry-pick in progress") }
-            if r.isDirty { reasons.append("dirty") }
-            if r.hasUpstream && r.behind > 0 { reasons.append("↓\(r.behind) behind") }
-            if !r.hasUpstream { reasons.append("no upstream") }
-            if r.hasUpstream && r.ahead > 0 { reasons.append("↑\(r.ahead) not pushed") }
-            if r.stashCount > 0 { reasons.append("\(r.stashCount) stashed") }
-            return reasons
-        }
-
         for fx in referenceFixtureMatrix {
             let info = RepoInfo(
                 name: fx.name,
@@ -2413,8 +2389,11 @@ do {
                 isRebasing: fx.rebasing,
                 isCherryPicking: fx.cherryPicking
             )
-            assertEqual(computeScore(for: info), fx.expectedScore, "Fixture \(fx.name) attention score matches myOps reference")
-            assertEqual(computeReasons(for: info), fx.expectedReasons, "Fixture \(fx.name) attention reasons match myOps reference")
+            // Exercises RepoInfo.attentionScore/attentionReasons directly — the same
+            // production properties OverviewDashboardView reads — instead of a duplicated
+            // local reimplementation, so any drift is caught here.
+            assertEqual(info.attentionScore, fx.expectedScore, "Fixture \(fx.name) attention score matches myOps reference")
+            assertEqual(info.attentionReasons, fx.expectedReasons, "Fixture \(fx.name) attention reasons match myOps reference")
         }
 
         // 12. Reference Age Band Parity

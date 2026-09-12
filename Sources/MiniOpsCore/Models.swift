@@ -40,6 +40,33 @@ public struct RepoInfo: Codable, Identifiable, Hashable, Sendable {
         return "local"
     }
 
+    /// Reference-matching "needs attention" score used by the Overview attention list.
+    /// Kept as the single source of truth so the UI and tests never drift apart.
+    public var attentionScore: Int {
+        var score = 0
+        if isMerging || isRebasing || isCherryPicking { score += 100 }
+        if isDirty { score += 10 }
+        if hasUpstream && behind > 0 { score += 5 + behind }
+        if !hasUpstream { score += 3 }
+        if hasUpstream && ahead > 0 { score += 1 }
+        if stashCount > 0 { score += 1 }
+        return score
+    }
+
+    /// Human-readable reasons backing `attentionScore`, in the same priority order.
+    public var attentionReasons: [String] {
+        var reasons: [String] = []
+        if isMerging { reasons.append("merge in progress") }
+        if isRebasing { reasons.append("rebase in progress") }
+        if isCherryPicking { reasons.append("cherry-pick in progress") }
+        if isDirty { reasons.append("dirty") }
+        if hasUpstream && behind > 0 { reasons.append("↓\(behind) behind") }
+        if !hasUpstream { reasons.append("no upstream") }
+        if hasUpstream && ahead > 0 { reasons.append("↑\(ahead) not pushed") }
+        if stashCount > 0 { reasons.append("\(stashCount) stashed") }
+        return reasons
+    }
+
     public init(
         name: String,
         path: String,
