@@ -12,6 +12,8 @@ public final class TicketScanner: @unchecked Sendable {
     public func scanTickets(workspacePath: String, repoPaths: [String]) -> [TicketInfo] {
         var tickets: [TicketInfo] = []
         var seenKeys: Set<String> = []
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
         // 1. Check jira-cache.json in workspace or repo
         let workspaceURL = URL(fileURLWithPath: (workspacePath as NSString).expandingTildeInPath)
@@ -41,7 +43,14 @@ public final class TicketScanner: @unchecked Sendable {
                         priority: priority,
                         isOpen: isOpen,
                         localPath: cacheURL.path,
-                        notes: ""
+                        notes: "",
+                        type: item["type"] as? String,
+                        project: item["project"] as? String,
+                        labels: item["labels"] as? [String] ?? [],
+                        created: (item["created"] as? String).flatMap { iso.date(from: $0) },
+                        updated: (item["updated"] as? String).flatMap { iso.date(from: $0) },
+                        resolved: (item["resolved"] as? String).flatMap { iso.date(from: $0) },
+                        jiraURL: item["url"] as? String
                     ))
                 }
             }

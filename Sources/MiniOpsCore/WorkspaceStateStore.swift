@@ -6,17 +6,25 @@ public struct IntegrationSettings: Codable, Equatable {
     public var githubUsername: String
     /// When enabled the embedded terminal attaches a Herdr session instead of a plain login shell.
     public var herdrModeEnabled: Bool
+    /// When the last Jira ticket sync completed, successfully or not. Lets the UI show a
+    /// persistent "last synced"/"stale" indicator instead of only a transient status message.
+    public var lastJiraSyncDate: Date?
+    public var lastJiraSyncError: String?
 
     public init(
         jiraBaseURL: String = "",
         jiraEmail: String = "",
         githubUsername: String = "",
-        herdrModeEnabled: Bool = false
+        herdrModeEnabled: Bool = false,
+        lastJiraSyncDate: Date? = nil,
+        lastJiraSyncError: String? = nil
     ) {
         self.jiraBaseURL = jiraBaseURL
         self.jiraEmail = jiraEmail
         self.githubUsername = githubUsername
         self.herdrModeEnabled = herdrModeEnabled
+        self.lastJiraSyncDate = lastJiraSyncDate
+        self.lastJiraSyncError = lastJiraSyncError
     }
 
     enum CodingKeys: String, CodingKey {
@@ -24,6 +32,8 @@ public struct IntegrationSettings: Codable, Equatable {
         case jiraEmail
         case githubUsername
         case herdrModeEnabled
+        case lastJiraSyncDate
+        case lastJiraSyncError
     }
 
     public init(from decoder: Decoder) throws {
@@ -32,6 +42,8 @@ public struct IntegrationSettings: Codable, Equatable {
         self.jiraEmail = try container.decodeIfPresent(String.self, forKey: .jiraEmail) ?? ""
         self.githubUsername = try container.decodeIfPresent(String.self, forKey: .githubUsername) ?? ""
         self.herdrModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .herdrModeEnabled) ?? false
+        self.lastJiraSyncDate = try container.decodeIfPresent(Date.self, forKey: .lastJiraSyncDate)
+        self.lastJiraSyncError = try container.decodeIfPresent(String.self, forKey: .lastJiraSyncError)
     }
 }
 
@@ -200,6 +212,14 @@ public final class WorkspaceStateStore: @unchecked Sendable {
     public func setHerdrModeEnabled(_ enabled: Bool) {
         queue.sync {
             cachedState.integrationSettings.herdrModeEnabled = enabled
+            persistToDisk()
+        }
+    }
+
+    public func recordJiraSyncResult(date: Date, error: String?) {
+        queue.sync {
+            cachedState.integrationSettings.lastJiraSyncDate = date
+            cachedState.integrationSettings.lastJiraSyncError = error
             persistToDisk()
         }
     }

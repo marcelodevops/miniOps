@@ -364,6 +364,13 @@ public struct TicketInfo: Codable, Identifiable, Hashable, Sendable {
     public let isOpen: Bool
     public let localPath: String?
     public var notes: String
+    public let type: String?
+    public let project: String?
+    public let labels: [String]
+    public let created: Date?
+    public let updated: Date?
+    public let resolved: Date?
+    public let jiraURL: String?
 
     public init(
         key: String,
@@ -373,7 +380,14 @@ public struct TicketInfo: Codable, Identifiable, Hashable, Sendable {
         priority: String = "Medium",
         isOpen: Bool = true,
         localPath: String? = nil,
-        notes: String = ""
+        notes: String = "",
+        type: String? = nil,
+        project: String? = nil,
+        labels: [String] = [],
+        created: Date? = nil,
+        updated: Date? = nil,
+        resolved: Date? = nil,
+        jiraURL: String? = nil
     ) {
         self.key = key
         self.summary = summary
@@ -383,6 +397,13 @@ public struct TicketInfo: Codable, Identifiable, Hashable, Sendable {
         self.isOpen = isOpen
         self.localPath = localPath
         self.notes = notes
+        self.type = type
+        self.project = project
+        self.labels = labels
+        self.created = created
+        self.updated = updated
+        self.resolved = resolved
+        self.jiraURL = jiraURL
     }
 }
 
