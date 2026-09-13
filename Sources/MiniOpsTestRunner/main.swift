@@ -3051,6 +3051,38 @@ do {
     assertEqual(recipientStore.getAppState().lastWorkspacePath, stdWs2, "Overwrote lastWorkspacePath")
     assertEqual(recipientStore.getWorkbenchLayout(workspacePath: stdWs1).focusedTicketKey, "DONOR-1", "Overwrote conflicting layout")
 
+    // E. Backup Failure Aborts Import Without Mutating State
+    let failDir = tempDir.appendingPathComponent("backup_failure_test")
+    try! FileManager.default.createDirectory(at: failDir, withIntermediateDirectories: true)
+    let failStoreURL = failDir.appendingPathComponent("state.json")
+    let failBackupURL = failDir.appendingPathComponent("state.bak.json")
+    // Block backup file creation by creating an existing directory at the backup path
+    try! FileManager.default.createDirectory(at: failBackupURL, withIntermediateDirectories: true)
+
+    let failStore = WorkspaceStateStore(customStorageURL: failStoreURL)
+    failStore.saveWorkspacePath(validWorkspace.path)
+    failStore.saveIntegrationSettings(IntegrationSettings(
+        jiraBaseURL: "https://initial.atlassian.net",
+        jiraEmail: "initial@example.com",
+        githubUsername: "initial-user",
+        ticketsPath: customTickets.path
+    ))
+
+    let backupDirectResult = failStore.backupState()
+    assertEqual(backupDirectResult.success, false, "backupState reports failure when write fails")
+    assert(backupDirectResult.error != nil, "backupState provides error description")
+
+    // Attempt import on the store whose backup path is blocked
+    let importWithFailBackupResult = failStore.importSettingsJSON(donorJSON, overwriteConflicts: true)
+    assertEqual(importWithFailBackupResult.success, false, "Import rejected when backup fails")
+    assert(importWithFailBackupResult.error?.contains("Backup failed") == true, "Error message states backup failed")
+    assert(importWithFailBackupResult.error?.contains("Import aborted") == true, "Error message confirms abort before mutations")
+
+    // Verify destination state was NOT mutated
+    assertEqual(failStore.getAppState().lastWorkspacePath, stdWs1, "Workspace path remained unmutated after backup failure")
+    assertEqual(failStore.getIntegrationSettings().jiraBaseURL, "https://initial.atlassian.net", "Integration settings remained unmutated after backup failure")
+    assertEqual(failStore.getIntegrationSettings().githubUsername, "initial-user", "Github username remained unmutated after backup failure")
+
     // 7. WorkspaceViewModel Tickets Path Validation & Imported Workspace Activation
     MainActor.assumeIsolated {
         let vm = WorkspaceViewModel(stateStore: store)

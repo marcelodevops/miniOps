@@ -284,14 +284,16 @@ public final class WorkspaceStateStore: @unchecked Sendable {
     }
 
     @discardableResult
-    public func backupState() -> Bool {
+    public func backupState() -> (success: Bool, error: String?) {
         queue.sync {
-            guard let data = try? JSONEncoder().encode(cachedState) else { return false }
+            guard let data = try? JSONEncoder().encode(cachedState) else {
+                return (false, "Failed to encode current state for backup.")
+            }
             do {
                 try data.write(to: backupStorageURL, options: .atomic)
-                return true
+                return (true, nil)
             } catch {
-                return false
+                return (false, "Failed to write backup to \(backupStorageURL.path): \(error.localizedDescription)")
             }
         }
     }
@@ -441,7 +443,11 @@ public final class WorkspaceStateStore: @unchecked Sendable {
         }
 
         // Back up destination state before applying any mutations!
-        _ = backupState()
+        let backupResult = backupState()
+        guard backupResult.success else {
+            let backupErr = backupResult.error ?? "Failed to create backup."
+            return (false, "Backup failed: \(backupErr). Import aborted before applying changes.", preview)
+        }
 
         queue.sync {
             // Workspace path: preserve existing if non-empty, unless overwriteConflicts is requested

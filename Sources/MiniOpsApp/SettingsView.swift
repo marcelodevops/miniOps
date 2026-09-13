@@ -88,6 +88,9 @@ private struct GeneralSettingsTab: View {
     @ObservedObject var viewModel: WorkspaceViewModel
     @State private var auditMessage: String?
     @State private var isAuditWarning: Bool = false
+    @State private var pendingImportJSON: String?
+    @State private var pendingImportFilename: String?
+    @State private var pendingImportPreview: SettingsImportPreview?
 
     var body: some View {
         ScrollView {
@@ -213,6 +216,19 @@ private struct GeneralSettingsTab: View {
                         }
                     }
 
+                    if let preview = pendingImportPreview, let filename = pendingImportFilename {
+                        SettingsImportPreviewView(
+                            filename: filename,
+                            preview: preview,
+                            onApply: { overwrite in
+                                applyImport(overwriteConflicts: overwrite)
+                            },
+                            onCancel: {
+                                cancelImportPreview()
+                            }
+                        )
+                    }
+
                     if let auditMsg = auditMessage {
                         HStack(spacing: 6) {
                             Image(systemName: isAuditWarning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
@@ -287,22 +303,62 @@ private struct GeneralSettingsTab: View {
         if openPanel.runModal() == .OK, let url = openPanel.url {
             do {
                 let json = try String(contentsOf: url, encoding: .utf8)
-                let res = viewModel.importSettingsJSON(json, overwriteConflicts: false)
-                if res.success {
-                    var detail = "Settings imported (backup created). Existing values preserved by default."
-                    if let prev = res.preview, prev.hasConflicts {
-                        detail += " Merged \(prev.newHiddenRepos.count) hidden and \(prev.newCustomRepos.count) custom repos."
-                    }
-                    auditMessage = detail
-                    isAuditWarning = false
-                } else {
-                    auditMessage = res.error ?? "Failed to import settings."
+                let (preview, err) = viewModel.previewSettingsImport(json)
+                if let err = err {
+                    auditMessage = err
                     isAuditWarning = true
+                    cancelImportPreview()
+                    return
                 }
+                guard let preview = preview else {
+                    auditMessage = "Failed to parse settings JSON."
+                    isAuditWarning = true
+                    cancelImportPreview()
+                    return
+                }
+                if !preview.validationErrors.isEmpty {
+                    auditMessage = "Validation failed: " + preview.validationErrors.joined(separator: "; ")
+                    isAuditWarning = true
+                    cancelImportPreview()
+                    return
+                }
+                self.pendingImportJSON = json
+                self.pendingImportFilename = url.lastPathComponent
+                self.pendingImportPreview = preview
+                self.auditMessage = nil
             } catch {
                 auditMessage = "Could not read file: \(error.localizedDescription)"
                 isAuditWarning = true
+                cancelImportPreview()
             }
+        }
+    }
+
+    private func cancelImportPreview() {
+        pendingImportJSON = nil
+        pendingImportFilename = nil
+        pendingImportPreview = nil
+    }
+
+    private func applyImport(overwriteConflicts: Bool) {
+        guard let json = pendingImportJSON else { return }
+        let res = viewModel.importSettingsJSON(json, overwriteConflicts: overwriteConflicts)
+        cancelImportPreview()
+        if res.success {
+            var detail = "Settings imported successfully (backup created at state.bak.json)."
+            if !overwriteConflicts {
+                detail += " Existing values were preserved on conflict."
+            } else {
+                detail += " Conflicting values were overwritten."
+            }
+            if let prev = res.preview, prev.hasConflicts {
+                detail += " Merged \(prev.newHiddenRepos.count) hidden and \(prev.newCustomRepos.count) custom repos."
+            }
+            auditMessage = detail
+            isAuditWarning = false
+        } else {
+            auditMessage = res.error ?? "Failed to import settings."
+            isAuditWarning = true
         }
     }
 
@@ -315,6 +371,193 @@ private struct GeneralSettingsTab: View {
             auditMessage = "Audit found \(warnings.count) issue(s): " + warnings.joined(separator: "; ")
             isAuditWarning = true
         }
+    }
+}
+
+private struct SettingsImportPreviewView: View {
+    let filename: String
+    let preview: SettingsImportPreview
+    let onApply: (Bool) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Header
+            HStack {
+                Image(systemName: preview.hasConflicts ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .foregroundColor(preview.hasConflicts ? .orange : .green)
+                    .font(.system(size: 13))
+                Text("Pre-Import Review: \(filename)")
+                    .font(.system(size: 12, weight: .bold))
+                Spacer()
+                Button(action: onCancel) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.borderless)
+            }
+
+            // Conflict / status banner
+            if preview.hasConflicts {
+                Text("Conflicts detected with current settings. Existing values will be preserved by default unless you choose to overwrite them.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.12))
+                    .cornerRadius(6)
+            } else {
+                Text("No conflicts detected. All configuration settings are compatible and will be imported cleanly.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.green)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.green.opacity(0.12))
+                    .cornerRadius(6)
+            }
+
+            // Conflict & mapping details
+            VStack(alignment: .leading, spacing: 6) {
+                // Workspace conflict
+                if let ws = preview.workspaceConflict {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Workspace Conflict")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Current: \(ws.currentValue)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        Text("Imported: \(ws.importedValue)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.primary)
+                        Text("• Will preserve current workspace by default")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(4)
+                }
+
+                // Integration conflicts
+                if !preview.integrationConflicts.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Integration Conflicts (\(preview.integrationConflicts.count))")
+                            .font(.system(size: 11, weight: .semibold))
+                        ForEach(preview.integrationConflicts, id: \.field) { conflict in
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("\(conflict.field):")
+                                    .font(.system(size: 10, weight: .medium))
+                                Text("  Current: \(conflict.currentValue)")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                Text("  Imported: \(conflict.importedValue)")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(.primary)
+                            }
+                        }
+                        Text("• Will preserve current values by default")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(4)
+                }
+
+                // Repositories summary
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Repository Merging")
+                        .font(.system(size: 11, weight: .semibold))
+                    HStack(spacing: 12) {
+                        Text("Custom repos: +\(preview.newCustomRepos.count) new, \(preview.preservedCustomRepos.count) preserved")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        Text("Hidden repos: +\(preview.newHiddenRepos.count) new, \(preview.preservedHiddenRepos.count) preserved")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(4)
+
+                // Layouts summary
+                if !preview.layoutConflicts.isEmpty || !preview.newLayouts.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Workbench Layouts")
+                            .font(.system(size: 11, weight: .semibold))
+                        HStack(spacing: 12) {
+                            if !preview.layoutConflicts.isEmpty {
+                                Text("\(preview.layoutConflicts.count) conflicting layout(s) (preserved by default)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                            if !preview.newLayouts.isEmpty {
+                                Text("+\(preview.newLayouts.count) new layout(s)")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(4)
+                }
+
+                // Backup notice
+                HStack(spacing: 4) {
+                    Image(systemName: "shield.lefthalf.filled")
+                        .font(.system(size: 10))
+                        .foregroundColor(.accentColor)
+                    Text("Destination state is automatically backed up to state.bak.json. Import will abort before mutating if backup fails.")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.top, 2)
+            }
+
+            // Action Buttons
+            HStack(spacing: 8) {
+                if preview.hasConflicts {
+                    Button("Apply Import (Preserve Conflicts)") {
+                        onApply(false)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+
+                    Button("Overwrite Conflicts") {
+                        onApply(true)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                } else {
+                    Button("Apply Import") {
+                        onApply(false)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+
+                Button("Cancel") {
+                    onCancel()
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+            .padding(.top, 4)
+        }
+        .padding(12)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.7))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(preview.hasConflicts ? Color.orange.opacity(0.4) : Color.accentColor.opacity(0.3), lineWidth: 1)
+        )
+        .cornerRadius(8)
     }
 }
 
