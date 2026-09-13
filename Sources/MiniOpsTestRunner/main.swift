@@ -2606,6 +2606,41 @@ do {
     let codexResolvedUsage = AgentScanner.shared.resolveUsage(tool: "OpenAI Codex", cwd: mockCodexRepoPath, sessionUsage: mockSessionUsage)
     assertEqual(codexResolvedUsage?.contextPercent, 80.0, "resolveUsage matches Codex session")
 
+    // Boundary safety regression: prefix collision between "/repos/app" and "/repos/app-tools"
+    let prefixCollisionUsage: [String: [String: AgentUsage]] = [
+        "claude": [
+            "/repos/app": repoClaudeUsage!
+        ]
+    ]
+    let collidingUsage = AgentScanner.shared.resolveUsage(
+        tool: "Claude Code",
+        cwd: "/repos/app-tools",
+        sessionUsage: prefixCollisionUsage
+    )
+    assert(collidingUsage == nil, "Agent in /repos/app-tools must NOT match session usage from /repos/app")
+
+    // Subpath matching: child directory receives parent usage
+    let childDirUsage = AgentScanner.shared.resolveUsage(
+        tool: "Claude Code",
+        cwd: "/repos/app/submodule",
+        sessionUsage: prefixCollisionUsage
+    )
+    assertEqual(childDirUsage?.contextPercent, 30.0, "Agent in child subdirectory receives parent session usage")
+
+    // Ambiguity resolution: multiple matching candidate usages returns nil (unknown)
+    let ambiguousUsage: [String: [String: AgentUsage]] = [
+        "claude": [
+            "/repos/app/sub1": repoClaudeUsage!,
+            "/repos/app/sub2": repoClaudeUsage!
+        ]
+    ]
+    let multiMatchUsage = AgentScanner.shared.resolveUsage(
+        tool: "Claude Code",
+        cwd: "/repos/app",
+        sessionUsage: ambiguousUsage
+    )
+    assert(multiMatchUsage == nil, "Ambiguous session usages across multiple subdirectories return nil")
+
     let agentWaiting = AgentInfo(
         pid: 12345,
         tool: "Claude Code",
@@ -2752,7 +2787,35 @@ do {
     assertEqual(datasets.count, 3, "Discovered 3 graph datasets across workspace, tickets, and repo")
     assert(datasets.contains(where: { $0.key == "workspace" }), "Found workspace dataset")
     assert(datasets.contains(where: { $0.key == "tickets-hidden" }), "Found tickets dataset")
-    assert(datasets.contains(where: { $0.key == "repo-repo-alpha" }), "Found repo dataset")
+    let canonicalAlphaPath = URL(fileURLWithPath: repoAlpha.path).standardized.path
+    assert(datasets.contains(where: { $0.key == "repo:\(canonicalAlphaPath)" }), "Found repo dataset with canonical path key")
+
+    // Disambiguation for duplicate repo names (e.g. services/api and client/api)
+    let servicesApiDir = tempDir.appendingPathComponent("services").appendingPathComponent("api")
+    let clientApiDir = tempDir.appendingPathComponent("client").appendingPathComponent("api")
+    try! FileManager.default.createDirectory(at: servicesApiDir.appendingPathComponent("graphify-out"), withIntermediateDirectories: true)
+    try! FileManager.default.createDirectory(at: clientApiDir.appendingPathComponent("graphify-out"), withIntermediateDirectories: true)
+    try! sampleJSON.write(to: servicesApiDir.appendingPathComponent("graphify-out").appendingPathComponent("graph.json"), atomically: true, encoding: .utf8)
+    try! sampleJSON.write(to: clientApiDir.appendingPathComponent("graphify-out").appendingPathComponent("graph.json"), atomically: true, encoding: .utf8)
+
+    let servicesApiRepo = RepoInfo(name: "api", path: servicesApiDir.path)
+    let clientApiRepo = RepoInfo(name: "api", path: clientApiDir.path)
+
+    let disambiguatedDatasets = GraphifyScanner.shared.discoverDatasets(
+        workspacePath: tempDir.path,
+        repositories: [repoAlpha, servicesApiRepo, clientApiRepo]
+    )
+    let canonicalServicesApiPath = URL(fileURLWithPath: servicesApiDir.path).standardized.path
+    let canonicalClientApiPath = URL(fileURLWithPath: clientApiDir.path).standardized.path
+
+    let servicesApiDataset = disambiguatedDatasets.first(where: { $0.key == "repo:\(canonicalServicesApiPath)" })
+    let clientApiDataset = disambiguatedDatasets.first(where: { $0.key == "repo:\(canonicalClientApiPath)" })
+
+    assert(servicesApiDataset != nil, "Found services/api dataset with distinct canonical key")
+    assert(clientApiDataset != nil, "Found client/api dataset with distinct canonical key")
+    assert(servicesApiDataset?.key != clientApiDataset?.key, "Dataset keys do not collide for same-named repos")
+    assertEqual(servicesApiDataset?.label, "api (services) Graph", "services/api label is disambiguated with parent folder name")
+    assertEqual(clientApiDataset?.label, "api (client) Graph", "client/api label is disambiguated with parent folder name")
 
     // 2. Load Graph Data
     let graph = GraphifyScanner.shared.loadGraph(from: wsGraphDir.path)!
@@ -2792,16 +2855,20 @@ do {
         let store = WorkspaceStateStore(customStorageURL: storeURL)
         let vm = WorkspaceViewModel(stateStore: store)
         vm.workspacePath = tempDir.path
-        vm.repositories = [repoAlpha]
+        vm.repositories = [repoAlpha, servicesApiRepo, clientApiRepo]
 
         vm.refreshGraph()
-        assertEqual(vm.availableGraphDatasets.count, 3, "ViewModel discovered 3 datasets")
+        assertEqual(vm.availableGraphDatasets.count, 5, "ViewModel discovered 5 datasets including duplicate repo names")
         assertEqual(vm.selectedGraphDatasetKey, "workspace", "Selected first available dataset by default")
         assertEqual(vm.graphData?.nodes.count, 5, "Loaded graph data into ViewModel")
 
         vm.selectGraphDataset(key: "tickets-hidden")
         assertEqual(vm.selectedGraphDatasetKey, "tickets-hidden", "Dataset switched to tickets-hidden")
         assertEqual(vm.graphData?.nodes.count, 5, "Loaded tickets graph data")
+
+        vm.selectGraphDataset(key: "repo:\(canonicalServicesApiPath)")
+        assertEqual(vm.selectedGraphDatasetKey, "repo:\(canonicalServicesApiPath)", "Selected services/api dataset")
+        assertEqual(vm.graphData?.nodes.count, 5, "Loaded services/api graph data")
     }
 }
 
@@ -2889,7 +2956,102 @@ do {
     assertEqual(freshStore.getIntegrationSettings().ticketsPath, customTickets.path, "Imported tickets path restored")
     assert(freshStore.getCustomRepoPaths().contains(customRepo.path), "Imported custom repo restored")
 
-    // 6. WorkspaceViewModel Tickets Path Validation
+    // 6. Settings Import Conflict Preview, Default Preservation, Backup & Restore
+    let validWorkspace2 = tempDir.appendingPathComponent("workspace2")
+    try! FileManager.default.createDirectory(at: validWorkspace2, withIntermediateDirectories: true)
+
+    let customTickets2 = tempDir.appendingPathComponent("custom-tickets2")
+    try! FileManager.default.createDirectory(at: customTickets2, withIntermediateDirectories: true)
+
+    let customRepo2 = tempDir.appendingPathComponent("custom-repo2")
+    try! FileManager.default.createDirectory(at: customRepo2.appendingPathComponent(".git"), withIntermediateDirectories: true)
+
+    let donorStoreURL = tempDir.appendingPathComponent("donor_state.json")
+    let donorStore = WorkspaceStateStore(customStorageURL: donorStoreURL)
+    donorStore.saveWorkspacePath(validWorkspace2.path)
+    donorStore.addCustomRepo(path: customRepo2.path)
+    donorStore.hideRepo(path: "/donor/hidden")
+    donorStore.saveIntegrationSettings(IntegrationSettings(
+        jiraBaseURL: "https://imported.atlassian.net",
+        jiraEmail: "imported@example.com",
+        githubUsername: "imported-user",
+        herdrModeEnabled: true,
+        ticketsPath: customTickets2.path
+    ))
+    var donorLayout1 = WorkbenchLayoutState()
+    donorLayout1.focusedTicketKey = "DONOR-1"
+    var donorLayout2 = WorkbenchLayoutState()
+    donorLayout2.focusedTicketKey = "DONOR-2"
+    donorStore.saveWorkbenchLayout(donorLayout1, workspacePath: validWorkspace.path)
+    donorStore.saveWorkbenchLayout(donorLayout2, workspacePath: validWorkspace2.path)
+    let donorJSON = donorStore.exportSettingsJSON()!
+
+    let recipientStoreURL = tempDir.appendingPathComponent("recipient_state.json")
+    let recipientStore = WorkspaceStateStore(customStorageURL: recipientStoreURL)
+    recipientStore.saveWorkspacePath(validWorkspace.path)
+    recipientStore.addCustomRepo(path: customRepo.path)
+    recipientStore.hideRepo(path: "/recipient/hidden")
+    recipientStore.saveIntegrationSettings(IntegrationSettings(
+        jiraBaseURL: "https://recipient.atlassian.net",
+        jiraEmail: "recipient@example.com",
+        githubUsername: "recipient-user",
+        herdrModeEnabled: false,
+        ticketsPath: customTickets.path
+    ))
+    var recipientLayout1 = WorkbenchLayoutState()
+    recipientLayout1.focusedTicketKey = "RECIPIENT-ORIGINAL"
+    recipientStore.saveWorkbenchLayout(recipientLayout1, workspacePath: validWorkspace.path)
+
+    // A. Preview Conflict Detection
+    let (preview, previewErr) = recipientStore.previewSettingsImport(donorJSON)
+    assert(previewErr == nil, "Preview generated without errors")
+    assert(preview != nil, "Preview object returned")
+    assertEqual(preview?.hasConflicts, true, "Preview identifies existing conflicts")
+    let stdWs1 = URL(fileURLWithPath: validWorkspace.path).standardized.path
+    let stdWs2 = URL(fileURLWithPath: validWorkspace2.path).standardized.path
+    assertEqual(preview?.workspaceConflict?.currentValue, stdWs1, "Preview detects workspace conflict current")
+    assertEqual(preview?.workspaceConflict?.importedValue, stdWs2, "Preview detects workspace conflict imported")
+    assertEqual(preview?.integrationConflicts.count, 4, "Preview detects 4 integration conflicts")
+    assertEqual(preview?.layoutConflicts, [stdWs1], "Preview detects layout conflict for workspace 1")
+    assertEqual(preview?.newLayouts, [stdWs2], "Preview detects new layout for workspace 2")
+
+    // B. Default Preservation (overwriteConflicts == false)
+    let defaultImportResult = recipientStore.importSettingsJSON(donorJSON, overwriteConflicts: false)
+    assertEqual(defaultImportResult.success, true, "Default import succeeds")
+    let intAfterDefault = recipientStore.getIntegrationSettings()
+    assertEqual(intAfterDefault.jiraBaseURL, "https://recipient.atlassian.net", "Preserves recipient jiraBaseURL")
+    assertEqual(intAfterDefault.jiraEmail, "recipient@example.com", "Preserves recipient jiraEmail")
+    assertEqual(intAfterDefault.githubUsername, "recipient-user", "Preserves recipient githubUsername")
+    assertEqual(intAfterDefault.ticketsPath, customTickets.path, "Preserves recipient ticketsPath")
+    assertEqual(intAfterDefault.herdrModeEnabled, true, "Union flags like herdrModeEnabled")
+    assertEqual(recipientStore.getAppState().lastWorkspacePath, stdWs1, "Preserves recipient lastWorkspacePath")
+    assert(recipientStore.getCustomRepoPaths().contains(URL(fileURLWithPath: customRepo.path).standardized.path), "Preserves existing custom repo")
+    assert(recipientStore.getCustomRepoPaths().contains(URL(fileURLWithPath: customRepo2.path).standardized.path), "Appends new custom repo")
+    assert(recipientStore.getHiddenRepoPaths().contains(URL(fileURLWithPath: "/recipient/hidden").standardized.path), "Preserves existing hidden repo")
+    assert(recipientStore.getHiddenRepoPaths().contains(URL(fileURLWithPath: "/donor/hidden").standardized.path), "Appends new hidden repo")
+    assertEqual(recipientStore.getWorkbenchLayout(workspacePath: stdWs1).focusedTicketKey, "RECIPIENT-ORIGINAL", "Preserves conflicting layout")
+    assertEqual(recipientStore.getWorkbenchLayout(workspacePath: stdWs2).focusedTicketKey, "DONOR-2", "Imports non-conflicting layout")
+
+    // C. Backup & Restore
+    assert(FileManager.default.fileExists(atPath: recipientStore.backupStorageURL.path), "Automatic backup file created before applying mutations")
+    let restored = recipientStore.restoreBackup()
+    assertEqual(restored.success, true, "restoreBackup succeeded")
+    let restoredState = recipientStore.getAppState()
+    assert(!restoredState.customRepoPaths.contains(URL(fileURLWithPath: customRepo2.path).standardized.path), "Restoring backup reverted imported custom repo")
+    assert(restoredState.workspaceLayouts[stdWs2] == nil, "Restoring backup reverted imported layout")
+
+    // D. Overwrite Conflicts (overwriteConflicts == true)
+    let overwriteResult = recipientStore.importSettingsJSON(donorJSON, overwriteConflicts: true)
+    assertEqual(overwriteResult.success, true, "Overwrite import succeeds")
+    let intAfterOverwrite = recipientStore.getIntegrationSettings()
+    assertEqual(intAfterOverwrite.jiraBaseURL, "https://imported.atlassian.net", "Overwrote jiraBaseURL")
+    assertEqual(intAfterOverwrite.jiraEmail, "imported@example.com", "Overwrote jiraEmail")
+    assertEqual(intAfterOverwrite.githubUsername, "imported-user", "Overwrote githubUsername")
+    assertEqual(intAfterOverwrite.ticketsPath, customTickets2.path, "Overwrote ticketsPath")
+    assertEqual(recipientStore.getAppState().lastWorkspacePath, stdWs2, "Overwrote lastWorkspacePath")
+    assertEqual(recipientStore.getWorkbenchLayout(workspacePath: stdWs1).focusedTicketKey, "DONOR-1", "Overwrote conflicting layout")
+
+    // 7. WorkspaceViewModel Tickets Path Validation & Imported Workspace Activation
     MainActor.assumeIsolated {
         let vm = WorkspaceViewModel(stateStore: store)
         vm.workspacePath = validWorkspace.path
@@ -2899,6 +3061,12 @@ do {
         let goodUpdate = vm.setTicketsPath(customTickets.path)
         assertEqual(goodUpdate.success, true, "ViewModel accepted valid tickets path")
         assertEqual(vm.tickets.count, 1, "ViewModel refreshed tickets from new path")
+
+        // Workspace activation verification:
+        // Importing a configuration with a different workspace path switches vm.workspacePath
+        let vmImportResult = vm.importSettingsJSON(donorJSON, overwriteConflicts: true)
+        assertEqual(vmImportResult.success, true, "ViewModel import succeeded")
+        assertEqual(vm.workspacePath, stdWs2, "ViewModel activated imported workspace via setWorkspace")
     }
 }
 

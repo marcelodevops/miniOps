@@ -205,14 +205,26 @@ public final class AgentScanner: @unchecked Sendable {
             ]
         }
 
+        func isPathMatch(agentPath: String, usagePath: String) -> Bool {
+            if agentPath == usagePath { return true }
+            let aSlash = agentPath.hasSuffix("/") ? agentPath : agentPath + "/"
+            let uSlash = usagePath.hasSuffix("/") ? usagePath : usagePath + "/"
+            return agentPath.hasPrefix(uSlash) || usagePath.hasPrefix(aSlash)
+        }
+
         for (key, dict) in usageMap {
             if lowerTool.contains(key) {
                 if let direct = dict[stdCwd] { return direct }
+                var candidateUsages: [AgentUsage] = []
                 for (usageCwd, usage) in dict {
-                    if stdCwd.hasPrefix(usageCwd) || usageCwd.hasPrefix(stdCwd) {
-                        return usage
+                    if isPathMatch(agentPath: stdCwd, usagePath: usageCwd) {
+                        candidateUsages.append(usage)
                     }
                 }
+                if candidateUsages.count == 1 {
+                    return candidateUsages.first
+                }
+                // Ambiguous matches (multiple candidates) remain unknown (nil)
             }
         }
         return nil

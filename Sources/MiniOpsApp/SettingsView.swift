@@ -287,9 +287,13 @@ private struct GeneralSettingsTab: View {
         if openPanel.runModal() == .OK, let url = openPanel.url {
             do {
                 let json = try String(contentsOf: url, encoding: .utf8)
-                let res = viewModel.importSettingsJSON(json)
+                let res = viewModel.importSettingsJSON(json, overwriteConflicts: false)
                 if res.success {
-                    auditMessage = "Settings imported and applied successfully from \(url.lastPathComponent)."
+                    var detail = "Settings imported (backup created). Existing values preserved by default."
+                    if let prev = res.preview, prev.hasConflicts {
+                        detail += " Merged \(prev.newHiddenRepos.count) hidden and \(prev.newCustomRepos.count) custom repos."
+                    }
+                    auditMessage = detail
                     isAuditWarning = false
                 } else {
                     auditMessage = res.error ?? "Failed to import settings."

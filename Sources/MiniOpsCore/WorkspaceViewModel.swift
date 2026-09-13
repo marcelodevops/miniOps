@@ -605,14 +605,37 @@ public final class WorkspaceViewModel: ObservableObject {
         stateStore.exportSettingsJSON()
     }
 
-    public func importSettingsJSON(_ jsonString: String) -> (success: Bool, error: String?) {
-        let result = stateStore.importSettingsJSON(jsonString)
+    public func previewSettingsImport(_ jsonString: String) -> (preview: SettingsImportPreview?, error: String?) {
+        stateStore.previewSettingsImport(jsonString)
+    }
+
+    public func importSettingsJSON(
+        _ jsonString: String,
+        overwriteConflicts: Bool = false
+    ) -> (success: Bool, error: String?, preview: SettingsImportPreview?) {
+        let result = stateStore.importSettingsJSON(jsonString, overwriteConflicts: overwriteConflicts)
         if result.success {
-            refreshRepositories()
+            if let targetWs = stateStore.getAppState().lastWorkspacePath, !targetWs.isEmpty {
+                let stdTarget = URL(fileURLWithPath: (targetWs as NSString).expandingTildeInPath).standardized.path
+                let stdCurrent = URL(fileURLWithPath: (workspacePath as NSString).expandingTildeInPath).standardized.path
+
+                if stdTarget != stdCurrent {
+                    setWorkspace(path: stdTarget)
+                } else {
+                    refreshRepositories()
+                }
+            } else {
+                refreshRepositories()
+            }
             refreshTickets()
             refreshGraph()
         }
         return result
+    }
+
+    public func importSettingsJSON(_ jsonString: String) -> (success: Bool, error: String?) {
+        let res = importSettingsJSON(jsonString, overwriteConflicts: false)
+        return (res.success, res.error)
     }
 
     public func auditSettings() -> [String] {

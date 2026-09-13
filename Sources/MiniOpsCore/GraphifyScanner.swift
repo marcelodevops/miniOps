@@ -30,10 +30,36 @@ public final class GraphifyScanner: @unchecked Sendable {
         checkDir(wsURL.appendingPathComponent("tickets").appendingPathComponent("graphify-out"), key: "tickets", label: "Tickets Graph")
         checkDir(wsURL.appendingPathComponent("tickets").appendingPathComponent(".graphify"), key: "tickets-hidden", label: "Tickets Graph (.graphify)")
 
+        let duplicateNames = Set(
+            Dictionary(grouping: repositories, by: \.name)
+                .filter { $0.value.count > 1 }
+                .map(\.key)
+        )
+
         for repo in repositories {
             let repoURL = URL(fileURLWithPath: (repo.path as NSString).expandingTildeInPath)
-            checkDir(repoURL.appendingPathComponent("graphify-out"), key: "repo-\(repo.name)", label: "\(repo.name) Graph", repoPath: repo.path)
-            checkDir(repoURL.appendingPathComponent(".graphify"), key: "repo-\(repo.name)-hidden", label: "\(repo.name) Graph (.graphify)", repoPath: repo.path)
+            let canonicalRepoPath = repoURL.standardized.path
+
+            let displayLabel: String
+            if duplicateNames.contains(repo.name) {
+                let parentName = repoURL.deletingLastPathComponent().lastPathComponent
+                displayLabel = "\(repo.name) (\(parentName))"
+            } else {
+                displayLabel = repo.name
+            }
+
+            checkDir(
+                repoURL.appendingPathComponent("graphify-out"),
+                key: "repo:\(canonicalRepoPath)",
+                label: "\(displayLabel) Graph",
+                repoPath: repo.path
+            )
+            checkDir(
+                repoURL.appendingPathComponent(".graphify"),
+                key: "repo:\(canonicalRepoPath):hidden",
+                label: "\(displayLabel) Graph (.graphify)",
+                repoPath: repo.path
+            )
         }
 
         return datasets

@@ -279,61 +279,230 @@ public final class WorkspaceStateStore: @unchecked Sendable {
         }
     }
 
-    public func importSettingsJSON(_ jsonString: String) -> (success: Bool, error: String?) {
-        guard let data = jsonString.data(using: .utf8) else {
-            return (false, "Invalid text encoding; expected UTF-8 JSON.")
+    public var backupStorageURL: URL {
+        storageURL.deletingPathExtension().appendingPathExtension("bak.json")
+    }
+
+    @discardableResult
+    public func backupState() -> Bool {
+        queue.sync {
+            guard let data = try? JSONEncoder().encode(cachedState) else { return false }
+            do {
+                try data.write(to: backupStorageURL, options: .atomic)
+                return true
+            } catch {
+                return false
+            }
         }
+    }
+
+    public func restoreBackup() -> (success: Bool, error: String?) {
+        queue.sync {
+            guard FileManager.default.fileExists(atPath: backupStorageURL.path),
+                  let data = try? Data(contentsOf: backupStorageURL) else {
+                return (false, "No backup file found at: \(backupStorageURL.path)")
+            }
+            do {
+                let restored = try JSONDecoder().decode(PersistedAppState.self, from: data)
+                cachedState = restored
+                persistToDisk()
+                return (true, nil)
+            } catch {
+                return (false, "Failed to decode backup state: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    public func previewSettingsImport(_ jsonString: String) -> (preview: SettingsImportPreview?, error: String?) {
+        guard let data = jsonString.data(using: .utf8) else {
+            return (nil, "Invalid text encoding; expected UTF-8 JSON.")
+        }
+        let imported: ExportedSettings
         do {
-            let imported = try JSONDecoder().decode(ExportedSettings.self, from: data)
+            imported = try JSONDecoder().decode(ExportedSettings.self, from: data)
+        } catch {
+            return (nil, "Failed to parse settings JSON: \(error.localizedDescription)")
+        }
 
-            // Strict audit & validation
-            if let ws = imported.lastWorkspacePath, !ws.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let expanded = (ws as NSString).expandingTildeInPath
-                var isDir: ObjCBool = false
-                if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
-                    return (false, "Workspace directory does not exist: \(ws)")
-                }
+        var validationErrors: [String] = []
+        if let ws = imported.lastWorkspacePath, !ws.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let expanded = (ws as NSString).expandingTildeInPath
+            var isDir: ObjCBool = false
+            if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
+                validationErrors.append("Workspace directory does not exist: \(ws)")
             }
+        }
 
-            let tp = imported.integrationSettings.ticketsPath.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !tp.isEmpty {
-                let expanded = (tp as NSString).expandingTildeInPath
-                var isDir: ObjCBool = false
-                if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
-                    return (false, "Tickets directory does not exist: \(tp)")
-                }
+        let tp = imported.integrationSettings.ticketsPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tp.isEmpty {
+            let expanded = (tp as NSString).expandingTildeInPath
+            var isDir: ObjCBool = false
+            if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
+                validationErrors.append("Tickets directory does not exist: \(tp)")
             }
+        }
 
-            for customRepo in imported.customRepoPaths {
-                let expanded = (customRepo as NSString).expandingTildeInPath
-                var isDir: ObjCBool = false
-                if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
-                    return (false, "Custom repository does not exist: \(customRepo)")
-                }
+        for customRepo in imported.customRepoPaths {
+            let expanded = (customRepo as NSString).expandingTildeInPath
+            var isDir: ObjCBool = false
+            if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
+                validationErrors.append("Custom repository does not exist: \(customRepo)")
+            } else {
                 let gitPath = (expanded as NSString).appendingPathComponent(".git")
                 if !FileManager.default.fileExists(atPath: gitPath) {
-                    return (false, "Custom repository is not a git repository: \(customRepo)")
+                    validationErrors.append("Custom repository is not a git repository: \(customRepo)")
+                }
+            }
+        }
+
+        return queue.sync {
+            var workspaceConflict: FieldConflict? = nil
+            if let impWs = imported.lastWorkspacePath, !impWs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let stdImp = standardize(impWs)
+                if let curWs = cachedState.lastWorkspacePath, !curWs.isEmpty, curWs != stdImp {
+                    workspaceConflict = FieldConflict(field: "workspacePath", currentValue: curWs, importedValue: stdImp)
                 }
             }
 
-            queue.sync {
-                if let ws = imported.lastWorkspacePath, !ws.isEmpty {
-                    cachedState.lastWorkspacePath = ws
+            let importedHidden = Set(imported.hiddenRepoPaths.map { standardize($0) })
+            let newHidden = Array(importedHidden.subtracting(cachedState.hiddenRepoPaths)).sorted()
+            let preservedHidden = Array(cachedState.hiddenRepoPaths).sorted()
+
+            let importedCustom = Set(imported.customRepoPaths.map { standardize($0) })
+            let newCustom = Array(importedCustom.subtracting(cachedState.customRepoPaths)).sorted()
+            let preservedCustom = Array(cachedState.customRepoPaths).sorted()
+
+            var integrationConflicts: [FieldConflict] = []
+            var preservedIntegration: [String] = []
+
+            func checkField(_ name: String, current: String, imported: String) {
+                if !current.isEmpty && !imported.isEmpty && current != imported {
+                    integrationConflicts.append(FieldConflict(field: name, currentValue: current, importedValue: imported))
+                } else if !current.isEmpty {
+                    preservedIntegration.append(name)
                 }
-                cachedState.hiddenRepoPaths = Set(imported.hiddenRepoPaths)
-                cachedState.customRepoPaths = Set(imported.customRepoPaths)
-                cachedState.integrationSettings = imported.integrationSettings
-                if let layouts = imported.workspaceLayouts {
-                    for (k, v) in layouts {
-                        cachedState.workspaceLayouts[k] = v
+            }
+
+            checkField("jiraBaseURL", current: cachedState.integrationSettings.jiraBaseURL, imported: imported.integrationSettings.jiraBaseURL)
+            checkField("jiraEmail", current: cachedState.integrationSettings.jiraEmail, imported: imported.integrationSettings.jiraEmail)
+            checkField("githubUsername", current: cachedState.integrationSettings.githubUsername, imported: imported.integrationSettings.githubUsername)
+            checkField("ticketsPath", current: cachedState.integrationSettings.ticketsPath, imported: imported.integrationSettings.ticketsPath)
+
+            var layoutConflicts: [String] = []
+            var newLayouts: [String] = []
+            if let layouts = imported.workspaceLayouts {
+                for (k, _) in layouts {
+                    let stdK = standardize(k)
+                    if cachedState.workspaceLayouts[stdK] != nil {
+                        layoutConflicts.append(stdK)
+                    } else {
+                        newLayouts.append(stdK)
                     }
                 }
-                persistToDisk()
             }
-            return (true, nil)
-        } catch {
-            return (false, "Failed to parse settings JSON: \(error.localizedDescription)")
+
+            let hasConflicts = workspaceConflict != nil || !integrationConflicts.isEmpty || !layoutConflicts.isEmpty
+
+            let preview = SettingsImportPreview(
+                workspaceConflict: workspaceConflict,
+                newHiddenRepos: newHidden,
+                preservedHiddenRepos: preservedHidden,
+                newCustomRepos: newCustom,
+                preservedCustomRepos: preservedCustom,
+                integrationConflicts: integrationConflicts,
+                preservedIntegrationFields: preservedIntegration,
+                layoutConflicts: layoutConflicts.sorted(),
+                newLayouts: newLayouts.sorted(),
+                hasConflicts: hasConflicts,
+                validationErrors: validationErrors
+            )
+            return (preview, nil)
         }
+    }
+
+    public func importSettingsJSON(
+        _ jsonString: String,
+        overwriteConflicts: Bool = false
+    ) -> (success: Bool, error: String?, preview: SettingsImportPreview?) {
+        let (previewOpt, parseErr) = previewSettingsImport(jsonString)
+        if let err = parseErr {
+            return (false, err, nil)
+        }
+        guard let preview = previewOpt else {
+            return (false, "Failed to generate import preview.", nil)
+        }
+        if !preview.validationErrors.isEmpty {
+            return (false, preview.validationErrors.joined(separator: "; "), preview)
+        }
+
+        guard let data = jsonString.data(using: .utf8),
+              let imported = try? JSONDecoder().decode(ExportedSettings.self, from: data) else {
+            return (false, "Failed to decode settings.", preview)
+        }
+
+        // Back up destination state before applying any mutations!
+        _ = backupState()
+
+        queue.sync {
+            // Workspace path: preserve existing if non-empty, unless overwriteConflicts is requested
+            if let ws = imported.lastWorkspacePath, !ws.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let stdWs = standardize(ws)
+                if overwriteConflicts || cachedState.lastWorkspacePath == nil || cachedState.lastWorkspacePath?.isEmpty == true {
+                    cachedState.lastWorkspacePath = stdWs
+                }
+            }
+
+            // Repositories: preserve existing by default through union
+            let importedHidden = Set(imported.hiddenRepoPaths.map { standardize($0) })
+            let importedCustom = Set(imported.customRepoPaths.map { standardize($0) })
+            if overwriteConflicts {
+                cachedState.hiddenRepoPaths = importedHidden
+                cachedState.customRepoPaths = importedCustom
+            } else {
+                cachedState.hiddenRepoPaths.formUnion(importedHidden)
+                cachedState.customRepoPaths.formUnion(importedCustom)
+            }
+
+            // Integration settings: preserve existing non-empty values by default
+            if overwriteConflicts {
+                cachedState.integrationSettings = imported.integrationSettings
+            } else {
+                if cachedState.integrationSettings.jiraBaseURL.isEmpty {
+                    cachedState.integrationSettings.jiraBaseURL = imported.integrationSettings.jiraBaseURL
+                }
+                if cachedState.integrationSettings.jiraEmail.isEmpty {
+                    cachedState.integrationSettings.jiraEmail = imported.integrationSettings.jiraEmail
+                }
+                if cachedState.integrationSettings.githubUsername.isEmpty {
+                    cachedState.integrationSettings.githubUsername = imported.integrationSettings.githubUsername
+                }
+                if cachedState.integrationSettings.ticketsPath.isEmpty {
+                    cachedState.integrationSettings.ticketsPath = imported.integrationSettings.ticketsPath
+                }
+                if !cachedState.integrationSettings.herdrModeEnabled && imported.integrationSettings.herdrModeEnabled {
+                    cachedState.integrationSettings.herdrModeEnabled = true
+                }
+            }
+
+            // Layouts: preserve existing by default on conflict
+            if let layouts = imported.workspaceLayouts {
+                for (k, v) in layouts {
+                    let stdK = standardize(k)
+                    if overwriteConflicts || cachedState.workspaceLayouts[stdK] == nil {
+                        cachedState.workspaceLayouts[stdK] = v
+                    }
+                }
+            }
+
+            persistToDisk()
+        }
+
+        return (true, nil, preview)
+    }
+
+    public func importSettingsJSON(_ jsonString: String) -> (success: Bool, error: String?) {
+        let res = importSettingsJSON(jsonString, overwriteConflicts: false)
+        return (res.success, res.error)
     }
 
     public func auditSettings() -> [String] {
@@ -394,5 +563,57 @@ public struct ExportedSettings: Codable, Equatable {
         self.customRepoPaths = customRepoPaths
         self.integrationSettings = integrationSettings
         self.workspaceLayouts = workspaceLayouts
+    }
+}
+
+public struct FieldConflict: Sendable, Codable, Equatable {
+    public let field: String
+    public let currentValue: String
+    public let importedValue: String
+
+    public init(field: String, currentValue: String, importedValue: String) {
+        self.field = field
+        self.currentValue = currentValue
+        self.importedValue = importedValue
+    }
+}
+
+public struct SettingsImportPreview: Sendable, Codable, Equatable {
+    public var workspaceConflict: FieldConflict?
+    public var newHiddenRepos: [String]
+    public var preservedHiddenRepos: [String]
+    public var newCustomRepos: [String]
+    public var preservedCustomRepos: [String]
+    public var integrationConflicts: [FieldConflict]
+    public var preservedIntegrationFields: [String]
+    public var layoutConflicts: [String]
+    public var newLayouts: [String]
+    public var hasConflicts: Bool
+    public var validationErrors: [String]
+
+    public init(
+        workspaceConflict: FieldConflict? = nil,
+        newHiddenRepos: [String] = [],
+        preservedHiddenRepos: [String] = [],
+        newCustomRepos: [String] = [],
+        preservedCustomRepos: [String] = [],
+        integrationConflicts: [FieldConflict] = [],
+        preservedIntegrationFields: [String] = [],
+        layoutConflicts: [String] = [],
+        newLayouts: [String] = [],
+        hasConflicts: Bool = false,
+        validationErrors: [String] = []
+    ) {
+        self.workspaceConflict = workspaceConflict
+        self.newHiddenRepos = newHiddenRepos
+        self.preservedHiddenRepos = preservedHiddenRepos
+        self.newCustomRepos = newCustomRepos
+        self.preservedCustomRepos = preservedCustomRepos
+        self.integrationConflicts = integrationConflicts
+        self.preservedIntegrationFields = preservedIntegrationFields
+        self.layoutConflicts = layoutConflicts
+        self.newLayouts = newLayouts
+        self.hasConflicts = hasConflicts
+        self.validationErrors = validationErrors
     }
 }
