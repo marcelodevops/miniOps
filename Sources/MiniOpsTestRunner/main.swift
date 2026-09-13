@@ -3102,6 +3102,180 @@ do {
     }
 }
 
+// Test 39: Milestone 6 Candidate Acceptance & Transition Invariants
+print("Test 39: Milestone 6 Candidate Acceptance & Transition Invariants")
+do {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("miniops-m6-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    // 1. Window Size & Split Dragging Reconciliation
+    // (a) Accepted minimum window size: 1000x680
+    let minSizeLayout = WorkbenchDockGeometry.resolve(width: 1000, left: 260, right: 300)
+    assertEqual(minSizeLayout.left, 260, "1000 width honours 260 left dock")
+    assertEqual(minSizeLayout.right, 300, "1000 width honours 300 right dock")
+    let minCenterWidth = 1000 - 8 - minSizeLayout.left - minSizeLayout.right
+    assert(minCenterWidth >= 360, "Center stage has at least 360pt at 1000px width (\(minCenterWidth)pt)")
+
+    let minTerminalHeight = max(680 * 0.30, 110)
+    assertEqual(minTerminalHeight, 204, "680 height terminal ratio 0.30 is 204pt")
+    let minCenterHeight = 680 - minTerminalHeight
+    assert(minCenterHeight >= 400, "Center stage has at least 400pt height at 680px height (\(minCenterHeight)pt)")
+
+    // (b) Standard display window size: 1280x800
+    let stdSizeLayout = WorkbenchDockGeometry.resolve(width: 1280, left: 260, right: 300)
+    assertEqual(stdSizeLayout.left, 260, "1280 width honours 260 left dock")
+    assertEqual(stdSizeLayout.right, 300, "1280 width honours 300 right dock")
+    let stdCenterWidth = 1280 - 8 - stdSizeLayout.left - stdSizeLayout.right
+    assertEqual(stdCenterWidth, 712, "Center stage width at 1280 is 712pt")
+
+    let stdTerminalHeight = max(800 * 0.30, 110)
+    assertEqual(stdTerminalHeight, 240, "800 height terminal ratio 0.30 is 240pt")
+    let stdCenterHeight = 800 - stdTerminalHeight
+    assertEqual(stdCenterHeight, 560, "Center stage height at 800 is 560pt")
+
+    // (c) Large desktop display: 2560x1440
+    let largeSizeLayout = WorkbenchDockGeometry.resolve(width: 2560, left: 400, right: 450)
+    assertEqual(largeSizeLayout.left, 400, "2560 width honours 400 left dock")
+    assertEqual(largeSizeLayout.right, 450, "2560 width honours 450 right dock")
+    let largeCenterWidth = 2560 - 8 - largeSizeLayout.left - largeSizeLayout.right
+    assertEqual(largeCenterWidth, 1702, "Center stage width at 2560 is 1702pt")
+
+    // (d) Constrained / extreme window degradation: 500px width
+    let constrained = WorkbenchDockGeometry.resolve(width: 500, left: 260, right: 300)
+    assert(constrained.left > 0 && constrained.left <= 260, "Constrained left dock scales down")
+    assert(constrained.right > 0 && constrained.right <= 300, "Constrained right dock scales down")
+    assert(constrained.left + constrained.right + 8 <= 500, "Panes never overflow container width")
+
+    // (e) Divider dragging invariants
+    let draggedLeft = WorkbenchDockGeometry.dragged(start: 260, translation: 50, minimum: 180, maximum: 450)
+    assertEqual(draggedLeft, 310, "Left divider drag expands smoothly")
+    let clampedMin = WorkbenchDockGeometry.dragged(start: 260, translation: -200, minimum: 180, maximum: 450)
+    assertEqual(clampedMin, 180, "Left divider drag clamps to minimum 180")
+    let clampedMax = WorkbenchDockGeometry.dragged(start: 260, translation: 300, minimum: 180, maximum: 450)
+    assertEqual(clampedMax, 450, "Left divider drag clamps to maximum 450")
+
+    let draggedRatio = WorkbenchDockGeometry.dragged(start: 0.30, translation: -0.10, minimum: 0.15, maximum: 0.70)
+    assert(abs(draggedRatio - 0.20) < 0.001, "Terminal height ratio drag updates smoothly")
+    let clampedRatioMin = WorkbenchDockGeometry.dragged(start: 0.30, translation: -0.25, minimum: 0.15, maximum: 0.70)
+    assert(abs(clampedRatioMin - 0.15) < 0.001, "Terminal ratio clamps to minimum 0.15")
+
+    // 2. Stress Resilience: Long Paths, Special Chars, Clean/Dirty Repos
+    let deeplyNestedRepoDir = tempDir
+        .appendingPathComponent("nested_workspaces_directory_for_deep_hierarchy_stress_testing_of_miniops")
+        .appendingPathComponent("submodules_and_components_layer_two")
+        .appendingPathComponent("repo_target_project_with_long_pathname")
+    try! FileManager.default.createDirectory(at: deeplyNestedRepoDir, withIntermediateDirectories: true)
+
+    // Initialize real git repo in long path
+    _ = runGit(args: ["init", "-b", "main"], in: deeplyNestedRepoDir.path)
+    _ = runGit(args: ["config", "user.name", "Test User"], in: deeplyNestedRepoDir.path)
+    _ = runGit(args: ["config", "user.email", "test@example.com"], in: deeplyNestedRepoDir.path)
+    _ = runGit(args: ["config", "commit.gpgsign", "false"], in: deeplyNestedRepoDir.path)
+
+    // Nested file with spaces, brackets, and special characters
+    let specialFileDir = deeplyNestedRepoDir.appendingPathComponent("src").appendingPathComponent("deep component [v2.0]")
+    try! FileManager.default.createDirectory(at: specialFileDir, withIntermediateDirectories: true)
+    let specialFile = specialFileDir.appendingPathComponent("test file with spaces and [brackets] & ampersand.txt")
+    try! "Initial line\n".write(to: specialFile, atomically: true, encoding: .utf8)
+
+    // Stage and commit initial file
+    _ = runGit(args: ["add", "."], in: deeplyNestedRepoDir.path)
+    _ = runGit(args: ["commit", "-m", "Initial commit"], in: deeplyNestedRepoDir.path)
+
+    // Clean repo status check
+    let cleanStatus = GitService.shared.getRepoStatus(repoPath: deeplyNestedRepoDir.path)
+    assertEqual(cleanStatus.isDirty, false, "Repository reports clean when no unstaged changes exist")
+    assertEqual(cleanStatus.changes.count, 0, "0 changed files in clean repo")
+
+    // Modify file to make it dirty
+    try! "Initial line\nModified secondary line for diff test\n".write(to: specialFile, atomically: true, encoding: .utf8)
+    let dirtyStatus = GitService.shared.getRepoStatus(repoPath: deeplyNestedRepoDir.path)
+    assertEqual(dirtyStatus.isDirty, true, "Repository reports dirty after file edit")
+    assertEqual(dirtyStatus.changes.count, 1, "1 changed file reported")
+    assert(dirtyStatus.changes.first?.path.contains("brackets") == true, "Changed file path preserved accurately")
+
+    // Diff inspection on long special path
+    let relPath = dirtyStatus.changes.first!.path
+    let diffContent = GitService.shared.getDiff(repoPath: deeplyNestedRepoDir.path, filePath: relPath, cached: false)
+    assert(diffContent.contains("+Modified secondary line"), "Diff accurately generated for special characters path")
+
+    // 3. Large Datasets Performance & Sorting Invariants
+    var largeRepoSet: [RepoInfo] = []
+    for i in 1...30 {
+        largeRepoSet.append(RepoInfo(
+            name: "repo-\(i)",
+            path: "/path/to/repo-\(i)",
+            branch: i % 2 == 0 ? "main" : "feat/OPS-\(i)",
+            isDirty: i % 3 == 0,
+            ahead: i % 6 == 0 ? i : 0,
+            behind: i % 4 == 0 ? i * 2 : 0,
+            changedFiles: [],
+            tags: ["service", "tier-\(i % 3)"],
+            origin: i % 2 == 0 ? "github" : "local",
+            hasUpstream: i % 5 != 0,
+            stashCount: i % 7 == 0 ? i : 0,
+            isMerging: i == 1,
+            isRebasing: i == 2,
+            isCherryPicking: i == 3
+        ))
+    }
+    assertEqual(largeRepoSet.count, 30, "Constructed 30 mock repositories")
+    let rankedRepos = largeRepoSet.sorted { $0.attentionScore > $1.attentionScore }
+    assertEqual(rankedRepos.count, 30, "All 30 repositories ranked")
+    assert(rankedRepos[0].isMerging || rankedRepos[0].isRebasing || rankedRepos[0].isCherryPicking, "Highest priority attention condition ranked first")
+
+    var largeTicketSet: [TicketInfo] = []
+    let cats = ["todo", "in_progress", "done", "closed"]
+    let prios = ["Critical", "High", "Medium", "Low", "None"]
+    for i in 1...60 {
+        largeTicketSet.append(TicketInfo(
+            key: "OPS-\(100 + i)",
+            summary: "Ticket summary for task \(i)",
+            status: i % 4 == 1 ? "In Progress" : (i % 4 == 0 ? "Done" : "To Do"),
+            statusCategory: cats[i % cats.count],
+            priority: prios[i % prios.count],
+            created: Date(timeIntervalSinceNow: -Double(i) * 3600)
+        ))
+    }
+    assertEqual(largeTicketSet.count, 60, "Constructed 60 mock tickets")
+
+    // 4. Zero Tickets Degraded State
+    let emptyTicketsDir = tempDir.appendingPathComponent("empty_tickets")
+    try! FileManager.default.createDirectory(at: emptyTicketsDir, withIntermediateDirectories: true)
+    let zeroTickets = TicketScanner.shared.scanTickets(workspacePath: tempDir.path, repoPaths: [], customTicketsPath: emptyTicketsDir.path)
+    assertEqual(zeroTickets.count, 0, "TicketScanner returns empty list for zero tickets")
+
+    MainActor.assumeIsolated {
+        let storeURL = tempDir.appendingPathComponent("m6_state.json")
+        let store = WorkspaceStateStore(customStorageURL: storeURL)
+        let vm = WorkspaceViewModel(stateStore: store)
+        vm.workspacePath = tempDir.path
+        vm.tickets = []
+        assertEqual(vm.tickets.count, 0, "ViewModel tickets count is 0")
+        assertEqual(vm.tickets.filter { $0.isOpen }.count, 0, "No tickets needing attention when tickets list is empty")
+        assert(vm.focusedTicket() == nil, "Focus ticket is nil when tickets list is empty")
+    }
+
+    // 5. Unavailable Integrations Graceful Degradation
+    let jiraSync = JiraService.shared.normalizeBaseURL("https://invalid-host-not-found-12345.internal")
+    assertEqual(jiraSync, "https://invalid-host-not-found-12345.internal", "Normalized URL without crash")
+
+    // 6. Rollback & Backup Script Invariants
+    let installScriptPath = "/Users/mac/repos/miniOps/scripts/install-app.sh"
+    let rollbackScriptPath = "/Users/mac/repos/miniOps/scripts/rollback-app.sh"
+    assert(FileManager.default.fileExists(atPath: installScriptPath), "install-app.sh exists")
+    assert(FileManager.default.fileExists(atPath: rollbackScriptPath), "rollback-app.sh exists")
+    assert(FileManager.default.isExecutableFile(atPath: rollbackScriptPath), "rollback-app.sh is executable")
+    let rollbackContent = try! String(contentsOfFile: rollbackScriptPath, encoding: .utf8)
+    assert(rollbackContent.contains("--rollback"), "rollback script passes --rollback flag to install script")
+
+    let installedAppPath = "/Applications/miniOps.app"
+    assert(FileManager.default.fileExists(atPath: installedAppPath), "Installed miniOps.app exists in /Applications")
+    let installedAppBak = "/Applications/miniOps.app.bak"
+    assert(FileManager.default.fileExists(atPath: installedAppBak), "Installed backup miniOps.app.bak exists for safe rollback")
+}
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")

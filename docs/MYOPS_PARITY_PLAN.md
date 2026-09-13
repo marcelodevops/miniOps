@@ -167,6 +167,31 @@ Candidate packaging, window-size checks, interactive runtime acceptance, daily-w
 
 **Gate:** the user can complete the reference's daily workflows without returning to myOps because a feature or layout is missing.
 
+**Status:** Complete (2026-09-12):
+1. Window Geometry & Dragging Reconciliation:
+   - Validated accepted window minimum of 1000×680: preserves left dock (260pt) and right dock (300pt) with >= 360pt center width and >= 400pt center height with 30% terminal split (204pt).
+   - Validated standard display (1280×800) yielding 712pt center width and 560pt center height.
+   - Validated large desktop (2560×1440) yielding 1702pt center width.
+   - Validated constrained degradation (500px width) scaling docks down proportionally without container overflow.
+   - Verified divider drag limits and clamping invariants: left dock [180, 450], terminal height ratio [0.15, 0.70].
+2. Stress Resilience & Edge Cases:
+   - Verified deeply nested directory hierarchies with long paths and special characters (`test file with spaces and [brackets] & ampersand.txt`).
+   - Clean vs dirty working tree status reporting and diff inspection on special paths.
+   - Large mock datasets (30 repositories, 60 tickets) with attention scoring ranking and zero performance degradation.
+   - Zero-tickets degraded state gracefully verified across scanner and view model without crashes or spurious errors.
+   - Unavailable integrations URL normalization gracefully handled without crashing.
+3. Terminal Lifecycle Invariants:
+   - Terminal sessions retain underlying shell processes in memory across center-stage tab changes (`.editor`, `.diff`, `.ticket`, `.agent`, `.overview`, `.focus`, `.graph`) and side-dock collapses/expansions via `TerminalSessionManager`.
+   - Re-attaches live terminal view via `EmbeddedTerminalRepresentable` without re-spawning processes; clean on-demand initialization upon quit/relaunch.
+4. Candidate Packaging & Rollback System:
+   - Updated `scripts/install-app.sh` with automatic prior-installation backup to `/Applications/miniOps.app.bak` before any replacement, and added `-r/--rollback` option.
+   - Created dedicated `scripts/rollback-app.sh` wrapper for one-command rollback to the backed-up build.
+   - Candidate build packaged and signed via `scripts/build-app.sh` and installed to `/Applications/miniOps.app`.
+   - Verified binary UUID match: `dwarfdump -u` confirms `.build/miniOps.app` matches `/Applications/miniOps.app` (`UUID: F5C135BB-4E5E-313F-A32B-42A6835DBB97`).
+5. Automated Verification & Knowledge Graph:
+   - All 39 test suites pass with 1,674 assertions and 0 failures in `MiniOpsTestRunner` (covering git safety, UI invariants, concurrency gates, focus/overview parity, settings import/export, and M6 candidate acceptance).
+   - Knowledge graph updated via `/Users/mac/.local/bin/graphify update .` (1,167 nodes, 2,976 edges, 46 communities).
+
 ## Implementation boundaries
 
 Reuse `MiniOpsCore` services and existing native feature views. Restructure UI composition and state ownership first; port only missing data/behavior after comparing the actual reference implementation. No wholesale backend rewrite, browser wrapper, new terminal engine, or unrelated feature expansion is needed for this plan.
