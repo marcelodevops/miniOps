@@ -35,6 +35,8 @@ public final class WorkspaceViewModel: ObservableObject {
     @Published public var isSyncingTickets: Bool = false
     @Published public var ticketSyncStatus: String? = nil
     @Published public var graphData: GraphifyData? = nil
+    @Published public var availableGraphDatasets: [GraphDatasetChoice] = []
+    @Published public var selectedGraphDatasetKey: String? = nil
     @Published public var workbenchLayout: WorkbenchLayoutState = WorkbenchLayoutState() {
         didSet {
             // Drag gestures persist their dimensions once, when the drag ends.
@@ -544,14 +546,77 @@ public final class WorkspaceViewModel: ObservableObject {
     }
 
     public func refreshGraph() {
-        self.graphData = GraphifyScanner.shared.loadGraph(for: selectedRepo?.path, workspacePath: workspacePath)
+        let choices = GraphifyScanner.shared.discoverDatasets(workspacePath: workspacePath, repositories: repositories)
+        self.availableGraphDatasets = choices
+
+        if let key = selectedGraphDatasetKey, let matched = choices.first(where: { $0.key == key }) {
+            self.graphData = GraphifyScanner.shared.loadGraph(from: matched.directoryPath)
+        } else if let first = choices.first {
+            self.selectedGraphDatasetKey = first.key
+            self.graphData = GraphifyScanner.shared.loadGraph(from: first.directoryPath)
+        } else {
+            self.graphData = GraphifyScanner.shared.loadGraph(for: selectedRepo?.path, workspacePath: workspacePath)
+        }
+    }
+
+    public func selectGraphDataset(key: String) {
+        self.selectedGraphDatasetKey = key
+        if let matched = availableGraphDatasets.first(where: { $0.key == key }) {
+            self.graphData = GraphifyScanner.shared.loadGraph(from: matched.directoryPath)
+        }
+    }
+
+    public var ticketsPath: String {
+        stateStore.getIntegrationSettings().ticketsPath
+    }
+
+    public func setTicketsPath(_ path: String) -> (success: Bool, error: String?) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            let expanded = (trimmed as NSString).expandingTildeInPath
+            var isDir: ObjCBool = false
+            if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
+                return (false, "Directory does not exist: \(trimmed)")
+            }
+        }
+        var settings = stateStore.getIntegrationSettings()
+        settings.ticketsPath = trimmed
+        stateStore.saveIntegrationSettings(settings)
+        refreshTickets()
+        return (true, nil)
     }
 
     public func refreshTickets() {
+        let customPath = stateStore.getIntegrationSettings().ticketsPath
         self.tickets = TicketScanner.shared.scanTickets(
             workspacePath: workspacePath,
-            repoPaths: repositories.map(\.path)
+            repoPaths: repositories.map(\.path),
+            customTicketsPath: customPath.isEmpty ? nil : customPath
         )
+    }
+
+    public func selectTicketByKey(_ key: String) {
+        if let ticket = tickets.first(where: { $0.key == key }) {
+            selectTicket(ticket)
+        }
+    }
+
+    public func exportSettingsJSON() -> String? {
+        stateStore.exportSettingsJSON()
+    }
+
+    public func importSettingsJSON(_ jsonString: String) -> (success: Bool, error: String?) {
+        let result = stateStore.importSettingsJSON(jsonString)
+        if result.success {
+            refreshRepositories()
+            refreshTickets()
+            refreshGraph()
+        }
+        return result
+    }
+
+    public func auditSettings() -> [String] {
+        stateStore.auditSettings()
     }
 
     /// Persistent freshness indicator for the Jira sync (survives relaunch, unlike the

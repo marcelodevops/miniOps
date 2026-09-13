@@ -642,16 +642,7 @@ public struct MainWindowView: View {
         case .focus:
             FocusWorkView(viewModel: viewModel)
         case .graph:
-            GraphifyVisualizerView(
-                graphData: viewModel.graphData,
-                onSelectFile: { filePath in
-                    viewModel.selectFile(filePath)
-                    viewModel.selectCenterTab(.editor)
-                },
-                onRefresh: {
-                    viewModel.refreshGraph()
-                }
-            )
+            GraphifyVisualizerView(viewModel: viewModel)
         }
     }
 

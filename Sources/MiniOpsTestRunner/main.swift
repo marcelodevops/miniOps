@@ -2703,6 +2703,205 @@ do {
 
 
 
+// Test 37: Knowledge Graph Parity (Datasets, Degrees, Neighborhood, Layout)
+print("Test 37: Knowledge Graph Parity (Datasets, Degrees, Neighborhood, Layout)")
+do {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("miniops-graph-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let wsGraphDir = tempDir.appendingPathComponent("graphify-out")
+    try! FileManager.default.createDirectory(at: wsGraphDir, withIntermediateDirectories: true)
+
+    let ticketsDir = tempDir.appendingPathComponent("tickets").appendingPathComponent(".graphify")
+    try! FileManager.default.createDirectory(at: ticketsDir, withIntermediateDirectories: true)
+
+    let repoDir = tempDir.appendingPathComponent("repo-alpha")
+    let repoGraphDir = repoDir.appendingPathComponent("graphify-out")
+    try! FileManager.default.createDirectory(at: repoGraphDir, withIntermediateDirectories: true)
+
+    // Sample graph JSON
+    let sampleJSON = """
+    {
+      "nodes": [
+        {"id": "node-A", "label": "WorkspaceService", "community": 1, "community_name": "Core", "file_type": "swift", "source_file": "Sources/Core/Service.swift"},
+        {"id": "node-B", "label": "WorkspaceViewModel", "community": 1, "community_name": "Core", "file_type": "swift", "source_file": "Sources/Core/ViewModel.swift"},
+        {"id": "node-C", "label": "MainWindowView", "community": 2, "community_name": "App", "file_type": "swift", "source_file": "Sources/App/MainWindow.swift"},
+        {"id": "node-D", "label": "GraphVisualizerView", "community": 2, "community_name": "App", "file_type": "swift", "source_file": "Sources/App/GraphView.swift"},
+        {"id": "node-E", "label": "SettingsView", "community": 3, "community_name": "Settings", "file_type": "swift", "source_file": "Sources/App/Settings.swift"}
+      ],
+      "links": [
+        {"source": "node-A", "target": "node-B", "relation": "dependency"},
+        {"source": "node-B", "target": "node-C", "relation": "observes"},
+        {"source": "node-C", "target": "node-D", "relation": "embeds"},
+        {"source": "node-C", "target": "node-E", "relation": "presents"}
+      ]
+    }
+    """
+    try! sampleJSON.write(to: wsGraphDir.appendingPathComponent("graph.json"), atomically: true, encoding: .utf8)
+    try! "# Report".write(to: wsGraphDir.appendingPathComponent("GRAPH_REPORT.md"), atomically: true, encoding: .utf8)
+    try! "<html></html>".write(to: wsGraphDir.appendingPathComponent("graph.html"), atomically: true, encoding: .utf8)
+
+    try! sampleJSON.write(to: ticketsDir.appendingPathComponent("graph.json"), atomically: true, encoding: .utf8)
+    try! sampleJSON.write(to: repoGraphDir.appendingPathComponent("graph.json"), atomically: true, encoding: .utf8)
+
+    let repoAlpha = RepoInfo(name: "repo-alpha", path: repoDir.path)
+
+    // 1. Dataset Discovery
+    let datasets = GraphifyScanner.shared.discoverDatasets(workspacePath: tempDir.path, repositories: [repoAlpha])
+    assertEqual(datasets.count, 3, "Discovered 3 graph datasets across workspace, tickets, and repo")
+    assert(datasets.contains(where: { $0.key == "workspace" }), "Found workspace dataset")
+    assert(datasets.contains(where: { $0.key == "tickets-hidden" }), "Found tickets dataset")
+    assert(datasets.contains(where: { $0.key == "repo-repo-alpha" }), "Found repo dataset")
+
+    // 2. Load Graph Data
+    let graph = GraphifyScanner.shared.loadGraph(from: wsGraphDir.path)!
+    assertEqual(graph.nodes.count, 5, "Loaded 5 nodes")
+    assertEqual(graph.links.count, 4, "Loaded 4 links")
+    assertEqual(graph.communities.count, 3, "Identified 3 communities")
+    assert(graph.reportPath != nil, "Report path detected")
+    assert(graph.htmlPath != nil, "HTML path detected")
+
+    // 3. Degree Computation
+    let degrees = GraphifyScanner.shared.computeDegrees(data: graph)
+    assertEqual(degrees["node-C"], 3, "MainWindowView (node-C) connects to B, D, and E (degree 3)")
+    assertEqual(degrees["node-B"], 2, "WorkspaceViewModel (node-B) connects to A and C (degree 2)")
+    assertEqual(degrees["node-A"], 1, "WorkspaceService (node-A) degree 1")
+
+    // 4. Neighborhood Expansion
+    let depth1FromC = GraphifyScanner.shared.computeNeighborhood(from: "node-C", depth: 1, links: graph.links)
+    assertEqual(depth1FromC, Set(["node-C", "node-B", "node-D", "node-E"]), "1-hop neighborhood from C includes B, D, E")
+
+    let depth2FromC = GraphifyScanner.shared.computeNeighborhood(from: "node-C", depth: 2, links: graph.links)
+    assertEqual(depth2FromC, Set(["node-C", "node-B", "node-D", "node-E", "node-A"]), "2-hop neighborhood from C expands to A")
+
+    let depth1FromA = GraphifyScanner.shared.computeNeighborhood(from: "node-A", depth: 1, links: graph.links)
+    assertEqual(depth1FromA, Set(["node-A", "node-B"]), "1-hop neighborhood from A only includes B")
+
+    // 5. Force Layout Generation
+    let layout = GraphifyScanner.shared.computeLayout(nodes: graph.nodes, links: graph.links, width: 800, height: 600)
+    assertEqual(layout.count, 5, "Generated layout coordinates for all 5 nodes")
+    for (nodeId, pos) in layout {
+        assert(pos.x >= 0 && pos.x <= 800, "Node \(nodeId) X coordinate within width bounds: \(pos.x)")
+        assert(pos.y >= 0 && pos.y <= 600, "Node \(nodeId) Y coordinate within height bounds: \(pos.y)")
+    }
+
+    // 6. WorkspaceViewModel Dataset Integration
+    MainActor.assumeIsolated {
+        let storeURL = tempDir.appendingPathComponent("graph_vm_state.json")
+        let store = WorkspaceStateStore(customStorageURL: storeURL)
+        let vm = WorkspaceViewModel(stateStore: store)
+        vm.workspacePath = tempDir.path
+        vm.repositories = [repoAlpha]
+
+        vm.refreshGraph()
+        assertEqual(vm.availableGraphDatasets.count, 3, "ViewModel discovered 3 datasets")
+        assertEqual(vm.selectedGraphDatasetKey, "workspace", "Selected first available dataset by default")
+        assertEqual(vm.graphData?.nodes.count, 5, "Loaded graph data into ViewModel")
+
+        vm.selectGraphDataset(key: "tickets-hidden")
+        assertEqual(vm.selectedGraphDatasetKey, "tickets-hidden", "Dataset switched to tickets-hidden")
+        assertEqual(vm.graphData?.nodes.count, 5, "Loaded tickets graph data")
+    }
+}
+
+// Test 38: Settings & Status Parity (Paths, Verification, Export/Import, Audit)
+print("Test 38: Settings & Status Parity (Paths, Verification, Export/Import, Audit)")
+do {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("miniops-settings-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let validWorkspace = tempDir.appendingPathComponent("workspace")
+    try! FileManager.default.createDirectory(at: validWorkspace, withIntermediateDirectories: true)
+
+    let customTickets = tempDir.appendingPathComponent("custom-tickets")
+    try! FileManager.default.createDirectory(at: customTickets, withIntermediateDirectories: true)
+
+    let customRepo = tempDir.appendingPathComponent("custom-repo")
+    try! FileManager.default.createDirectory(at: customRepo.appendingPathComponent(".git"), withIntermediateDirectories: true)
+
+    let storeURL = tempDir.appendingPathComponent("settings_state.json")
+    let store = WorkspaceStateStore(customStorageURL: storeURL)
+
+    // 1. Tickets Path in IntegrationSettings
+    var settings = store.getIntegrationSettings()
+    assertEqual(settings.ticketsPath, "", "Tickets path initially empty")
+    settings.ticketsPath = customTickets.path
+    store.saveIntegrationSettings(settings)
+
+    let reloadedStore = WorkspaceStateStore(customStorageURL: storeURL)
+    assertEqual(reloadedStore.getIntegrationSettings().ticketsPath, customTickets.path, "Tickets path persisted in store")
+
+    // 2. TicketScanner with Custom Tickets Path
+    let sampleTicketMD = """
+    # OPS-99 Parity Test Ticket
+    status: In Progress
+    priority: High
+    created: 2026-03-01
+    """
+    try! sampleTicketMD.write(to: customTickets.appendingPathComponent("OPS-99-parity.md"), atomically: true, encoding: .utf8)
+    let scannedTickets = TicketScanner.shared.scanTickets(workspacePath: validWorkspace.path, repoPaths: [], customTicketsPath: customTickets.path)
+    assertEqual(scannedTickets.count, 1, "Scanned ticket from custom tickets directory")
+    assertEqual(scannedTickets.first?.key, "OPS-99", "Ticket key matches OPS-99")
+    assertEqual(scannedTickets.first?.priority, "High", "Ticket priority is High")
+
+    // 3. Settings Audit
+    var warnings = store.auditSettings()
+    assertEqual(warnings.count, 0, "Initial store has 0 audit warnings")
+
+    store.saveWorkspacePath(validWorkspace.path)
+    store.addCustomRepo(path: customRepo.path)
+    warnings = store.auditSettings()
+    assertEqual(warnings.count, 0, "Valid workspace and repo have 0 audit warnings")
+
+    // Point tickets to nonexistent directory
+    var badSettings = store.getIntegrationSettings()
+    badSettings.ticketsPath = "/nonexistent/tickets/path"
+    store.saveIntegrationSettings(badSettings)
+    warnings = store.auditSettings()
+    assertEqual(warnings.count, 1, "Audit flags nonexistent tickets directory")
+
+    // Restore valid tickets path
+    badSettings.ticketsPath = customTickets.path
+    store.saveIntegrationSettings(badSettings)
+
+    // 4. Settings Export to JSON
+    let exportedJSON = store.exportSettingsJSON()
+    assert(exportedJSON != nil, "Settings exported to JSON")
+    assert(exportedJSON!.contains("custom-tickets"), "Exported JSON contains ticketsPath")
+    assert(exportedJSON!.contains("custom-repo"), "Exported JSON contains custom repo")
+
+    // 5. Settings Import with Strict Validation
+    let freshStoreURL = tempDir.appendingPathComponent("fresh_state.json")
+    let freshStore = WorkspaceStateStore(customStorageURL: freshStoreURL)
+
+    // Attempt import with non-existent workspace path -> rejected!
+    let stdWorkspacePath = URL(fileURLWithPath: validWorkspace.path).standardized.path
+    let invalidJSON = exportedJSON!.replacingOccurrences(of: stdWorkspacePath, with: "/definitely/not/a/real/dir")
+    let failResult = freshStore.importSettingsJSON(invalidJSON)
+    assertEqual(failResult.success, false, "Import rejected invalid workspace directory")
+    assert(failResult.error?.contains("does not exist") == true, "Error explains directory does not exist")
+
+    // Valid import -> succeeds!
+    let successResult = freshStore.importSettingsJSON(exportedJSON!)
+    assertEqual(successResult.success, true, "Import succeeded for valid settings JSON")
+    assertEqual(freshStore.getIntegrationSettings().ticketsPath, customTickets.path, "Imported tickets path restored")
+    assert(freshStore.getCustomRepoPaths().contains(customRepo.path), "Imported custom repo restored")
+
+    // 6. WorkspaceViewModel Tickets Path Validation
+    MainActor.assumeIsolated {
+        let vm = WorkspaceViewModel(stateStore: store)
+        vm.workspacePath = validWorkspace.path
+        let badUpdate = vm.setTicketsPath("/nonexistent/folder/1234")
+        assertEqual(badUpdate.success, false, "ViewModel rejected non-existent tickets path")
+
+        let goodUpdate = vm.setTicketsPath(customTickets.path)
+        assertEqual(goodUpdate.success, true, "ViewModel accepted valid tickets path")
+        assertEqual(vm.tickets.count, 1, "ViewModel refreshed tickets from new path")
+    }
+}
+
 print("==================================================")
 print("Complete Full miniOps Test Suite: \(passedCount) passed, \(failedCount) failed")
 print("==================================================")

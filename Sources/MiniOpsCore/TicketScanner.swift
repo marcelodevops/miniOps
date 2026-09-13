@@ -6,20 +6,25 @@ public final class TicketScanner: @unchecked Sendable {
     public init() {}
 
     public func scanTickets(workspacePath: String, repoPath: String? = nil) -> [TicketInfo] {
-        scanTickets(workspacePath: workspacePath, repoPaths: repoPath.map { [$0] } ?? [])
+        scanTickets(workspacePath: workspacePath, repoPaths: repoPath.map { [$0] } ?? [], customTicketsPath: nil)
     }
 
-    public func scanTickets(workspacePath: String, repoPaths: [String]) -> [TicketInfo] {
+    public func scanTickets(workspacePath: String, repoPaths: [String], customTicketsPath: String? = nil) -> [TicketInfo] {
         var tickets: [TicketInfo] = []
         var seenKeys: Set<String> = []
 
-        // 1. Check jira-cache.json in workspace or repo
+        // 1. Check jira-cache.json in customTicketsPath, workspace, or repo
         let workspaceURL = URL(fileURLWithPath: (workspacePath as NSString).expandingTildeInPath)
-        let possibleCachePaths = [workspaceURL.appendingPathComponent("jira-cache.json")]
-            + repoPaths.map {
-                URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
-                    .appendingPathComponent("jira-cache.json")
-            }
+        var possibleCachePaths: [URL] = []
+        if let ctp = customTicketsPath, !ctp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let customURL = URL(fileURLWithPath: (ctp as NSString).expandingTildeInPath)
+            possibleCachePaths.append(customURL.appendingPathComponent("jira-cache.json"))
+        }
+        possibleCachePaths.append(workspaceURL.appendingPathComponent("jira-cache.json"))
+        possibleCachePaths.append(contentsOf: repoPaths.map {
+            URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath)
+                .appendingPathComponent("jira-cache.json")
+        })
 
         for cacheURL in possibleCachePaths {
             if let data = try? Data(contentsOf: cacheURL),
@@ -56,8 +61,18 @@ public final class TicketScanner: @unchecked Sendable {
             }
         }
 
-        // 2. Check tickets/ directory in workspace or repo
-        var searchDirs = [workspaceURL.appendingPathComponent("tickets")]
+        // 2. Check tickets/ directory in customTicketsPath, workspace or repo
+        var searchDirs: [URL] = []
+        if let ctp = customTicketsPath, !ctp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let customURL = URL(fileURLWithPath: (ctp as NSString).expandingTildeInPath)
+            searchDirs.append(customURL)
+            searchDirs.append(customURL.appendingPathComponent("tickets"))
+            searchDirs.append(customURL.appendingPathComponent(".tickets"))
+            searchDirs.append(customURL.appendingPathComponent("managed-tickets"))
+        }
+        searchDirs.append(workspaceURL.appendingPathComponent("tickets"))
+        searchDirs.append(workspaceURL.appendingPathComponent(".tickets"))
+        searchDirs.append(workspaceURL.appendingPathComponent("managed-tickets"))
         for repoPath in repoPaths {
             let repoURL = URL(fileURLWithPath: (repoPath as NSString).expandingTildeInPath)
             searchDirs.append(repoURL.appendingPathComponent("tickets"))

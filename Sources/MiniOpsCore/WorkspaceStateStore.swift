@@ -6,17 +6,20 @@ public struct IntegrationSettings: Codable, Equatable {
     public var githubUsername: String
     /// When enabled the embedded terminal attaches a Herdr session instead of a plain login shell.
     public var herdrModeEnabled: Bool
+    public var ticketsPath: String
 
     public init(
         jiraBaseURL: String = "",
         jiraEmail: String = "",
         githubUsername: String = "",
-        herdrModeEnabled: Bool = false
+        herdrModeEnabled: Bool = false,
+        ticketsPath: String = ""
     ) {
         self.jiraBaseURL = jiraBaseURL
         self.jiraEmail = jiraEmail
         self.githubUsername = githubUsername
         self.herdrModeEnabled = herdrModeEnabled
+        self.ticketsPath = ticketsPath
     }
 
     enum CodingKeys: String, CodingKey {
@@ -24,6 +27,7 @@ public struct IntegrationSettings: Codable, Equatable {
         case jiraEmail
         case githubUsername
         case herdrModeEnabled
+        case ticketsPath
     }
 
     public init(from decoder: Decoder) throws {
@@ -32,6 +36,7 @@ public struct IntegrationSettings: Codable, Equatable {
         self.jiraEmail = try container.decodeIfPresent(String.self, forKey: .jiraEmail) ?? ""
         self.githubUsername = try container.decodeIfPresent(String.self, forKey: .githubUsername) ?? ""
         self.herdrModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .herdrModeEnabled) ?? false
+        self.ticketsPath = try container.decodeIfPresent(String.self, forKey: .ticketsPath) ?? ""
     }
 }
 
@@ -258,6 +263,108 @@ public final class WorkspaceStateStore: @unchecked Sendable {
         }
     }
 
+    public func exportSettingsJSON() -> String? {
+        queue.sync {
+            let export = ExportedSettings(
+                lastWorkspacePath: cachedState.lastWorkspacePath,
+                hiddenRepoPaths: Array(cachedState.hiddenRepoPaths).sorted(),
+                customRepoPaths: Array(cachedState.customRepoPaths).sorted(),
+                integrationSettings: cachedState.integrationSettings,
+                workspaceLayouts: cachedState.workspaceLayouts
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            guard let data = try? encoder.encode(export) else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
+    }
+
+    public func importSettingsJSON(_ jsonString: String) -> (success: Bool, error: String?) {
+        guard let data = jsonString.data(using: .utf8) else {
+            return (false, "Invalid text encoding; expected UTF-8 JSON.")
+        }
+        do {
+            let imported = try JSONDecoder().decode(ExportedSettings.self, from: data)
+
+            // Strict audit & validation
+            if let ws = imported.lastWorkspacePath, !ws.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let expanded = (ws as NSString).expandingTildeInPath
+                var isDir: ObjCBool = false
+                if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
+                    return (false, "Workspace directory does not exist: \(ws)")
+                }
+            }
+
+            let tp = imported.integrationSettings.ticketsPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !tp.isEmpty {
+                let expanded = (tp as NSString).expandingTildeInPath
+                var isDir: ObjCBool = false
+                if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
+                    return (false, "Tickets directory does not exist: \(tp)")
+                }
+            }
+
+            for customRepo in imported.customRepoPaths {
+                let expanded = (customRepo as NSString).expandingTildeInPath
+                var isDir: ObjCBool = false
+                if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
+                    return (false, "Custom repository does not exist: \(customRepo)")
+                }
+                let gitPath = (expanded as NSString).appendingPathComponent(".git")
+                if !FileManager.default.fileExists(atPath: gitPath) {
+                    return (false, "Custom repository is not a git repository: \(customRepo)")
+                }
+            }
+
+            queue.sync {
+                if let ws = imported.lastWorkspacePath, !ws.isEmpty {
+                    cachedState.lastWorkspacePath = ws
+                }
+                cachedState.hiddenRepoPaths = Set(imported.hiddenRepoPaths)
+                cachedState.customRepoPaths = Set(imported.customRepoPaths)
+                cachedState.integrationSettings = imported.integrationSettings
+                if let layouts = imported.workspaceLayouts {
+                    for (k, v) in layouts {
+                        cachedState.workspaceLayouts[k] = v
+                    }
+                }
+                persistToDisk()
+            }
+            return (true, nil)
+        } catch {
+            return (false, "Failed to parse settings JSON: \(error.localizedDescription)")
+        }
+    }
+
+    public func auditSettings() -> [String] {
+        queue.sync {
+            var warnings: [String] = []
+            if let ws = cachedState.lastWorkspacePath, !ws.isEmpty {
+                let expanded = (ws as NSString).expandingTildeInPath
+                var isDir: ObjCBool = false
+                if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
+                    warnings.append("Workspace directory missing or not a directory: \(ws)")
+                }
+            }
+            let tp = cachedState.integrationSettings.ticketsPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !tp.isEmpty {
+                let expanded = (tp as NSString).expandingTildeInPath
+                var isDir: ObjCBool = false
+                if !FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) || !isDir.boolValue {
+                    warnings.append("Configured tickets directory missing or not a directory: \(tp)")
+                }
+            }
+            for customRepo in cachedState.customRepoPaths {
+                let expanded = (customRepo as NSString).expandingTildeInPath
+                let gitPath = (expanded as NSString).appendingPathComponent(".git")
+                if !FileManager.default.fileExists(atPath: gitPath) {
+                    warnings.append("Custom repository missing .git: \(customRepo)")
+                }
+            }
+            return warnings
+        }
+    }
+
     private func standardize(_ path: String) -> String {
         URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardized.path
     }
@@ -265,5 +372,27 @@ public final class WorkspaceStateStore: @unchecked Sendable {
     private func persistToDisk() {
         guard let data = try? JSONEncoder().encode(cachedState) else { return }
         try? data.write(to: storageURL, options: .atomic)
+    }
+}
+
+public struct ExportedSettings: Codable, Equatable {
+    public var lastWorkspacePath: String?
+    public var hiddenRepoPaths: [String]
+    public var customRepoPaths: [String]
+    public var integrationSettings: IntegrationSettings
+    public var workspaceLayouts: [String: WorkbenchLayoutState]?
+
+    public init(
+        lastWorkspacePath: String? = nil,
+        hiddenRepoPaths: [String] = [],
+        customRepoPaths: [String] = [],
+        integrationSettings: IntegrationSettings = IntegrationSettings(),
+        workspaceLayouts: [String: WorkbenchLayoutState]? = nil
+    ) {
+        self.lastWorkspacePath = lastWorkspacePath
+        self.hiddenRepoPaths = hiddenRepoPaths
+        self.customRepoPaths = customRepoPaths
+        self.integrationSettings = integrationSettings
+        self.workspaceLayouts = workspaceLayouts
     }
 }

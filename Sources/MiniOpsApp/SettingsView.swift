@@ -86,6 +86,8 @@ public struct SettingsSheetContainer: View {
 
 private struct GeneralSettingsTab: View {
     @ObservedObject var viewModel: WorkspaceViewModel
+    @State private var auditMessage: String?
+    @State private var isAuditWarning: Bool = false
 
     var body: some View {
         ScrollView {
@@ -106,6 +108,37 @@ private struct GeneralSettingsTab: View {
                         Spacer()
                         Button("Change…") {
                             viewModel.chooseWorkspaceDirectory()
+                        }
+                    }
+                    .padding(10)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(8)
+                }
+
+                // Tickets Directory
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Tickets Directory")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.primary)
+
+                    HStack {
+                        Image(systemName: "ticket")
+                            .foregroundColor(.secondary)
+                        Text(viewModel.ticketsPath.isEmpty ? "Default (workspace/tickets)" : viewModel.ticketsPath)
+                            .font(.system(size: 11, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundColor(viewModel.ticketsPath.isEmpty ? .secondary : .primary)
+                        Spacer()
+                        if !viewModel.ticketsPath.isEmpty {
+                            Button("Reset") {
+                                _ = viewModel.setTicketsPath("")
+                                auditMessage = "Reset tickets directory to workspace default."
+                                isAuditWarning = false
+                            }
+                        }
+                        Button("Change…") {
+                            chooseTicketsDirectory()
                         }
                     }
                     .padding(10)
@@ -162,9 +195,121 @@ private struct GeneralSettingsTab: View {
                     }
                 }
 
+                // Backup & Audit
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Settings Backup & Audit")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.primary)
+
+                    HStack(spacing: 8) {
+                        Button("Export Settings…") {
+                            exportSettings()
+                        }
+                        Button("Import Settings…") {
+                            importSettings()
+                        }
+                        Button("Audit Settings") {
+                            runSettingsAudit()
+                        }
+                    }
+
+                    if let auditMsg = auditMessage {
+                        HStack(spacing: 6) {
+                            Image(systemName: isAuditWarning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                                .foregroundColor(isAuditWarning ? .orange : .green)
+                            Text(auditMsg)
+                                .font(.system(size: 11))
+                                .foregroundColor(isAuditWarning ? .orange : .primary)
+                            Spacer()
+                            Button(action: { auditMessage = nil }) {
+                                Image(systemName: "xmark").font(.system(size: 10))
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(8)
+                        .background(isAuditWarning ? Color.orange.opacity(0.1) : Color.green.opacity(0.1))
+                        .cornerRadius(6)
+                    }
+                }
+
                 Spacer()
             }
             .padding(20)
+        }
+    }
+
+    private func chooseTicketsDirectory() {
+        let openPanel = NSOpenPanel()
+        openPanel.canChooseFiles = false
+        openPanel.canChooseDirectories = true
+        openPanel.allowsMultipleSelection = false
+        openPanel.message = "Choose a Tickets Directory"
+        openPanel.prompt = "Select Tickets Folder"
+
+        if openPanel.runModal() == .OK, let url = openPanel.url {
+            let res = viewModel.setTicketsPath(url.path)
+            if !res.success {
+                auditMessage = res.error
+                isAuditWarning = true
+            } else {
+                auditMessage = "Tickets directory updated to: \(url.path)"
+                isAuditWarning = false
+            }
+        }
+    }
+
+    private func exportSettings() {
+        guard let json = viewModel.exportSettingsJSON() else {
+            auditMessage = "Failed to export settings."
+            isAuditWarning = true
+            return
+        }
+        let savePanel = NSSavePanel()
+        savePanel.nameFieldStringValue = "miniops-settings.json"
+        if savePanel.runModal() == .OK, let url = savePanel.url {
+            do {
+                try json.write(to: url, atomically: true, encoding: .utf8)
+                auditMessage = "Settings exported successfully to \(url.lastPathComponent)."
+                isAuditWarning = false
+            } catch {
+                auditMessage = "Failed to save file: \(error.localizedDescription)"
+                isAuditWarning = true
+            }
+        }
+    }
+
+    private func importSettings() {
+        let openPanel = NSOpenPanel()
+        openPanel.canChooseFiles = true
+        openPanel.canChooseDirectories = false
+        openPanel.allowsMultipleSelection = false
+        openPanel.message = "Choose a settings JSON file to import"
+        if openPanel.runModal() == .OK, let url = openPanel.url {
+            do {
+                let json = try String(contentsOf: url, encoding: .utf8)
+                let res = viewModel.importSettingsJSON(json)
+                if res.success {
+                    auditMessage = "Settings imported and applied successfully from \(url.lastPathComponent)."
+                    isAuditWarning = false
+                } else {
+                    auditMessage = res.error ?? "Failed to import settings."
+                    isAuditWarning = true
+                }
+            } catch {
+                auditMessage = "Could not read file: \(error.localizedDescription)"
+                isAuditWarning = true
+            }
+        }
+    }
+
+    private func runSettingsAudit() {
+        let warnings = viewModel.auditSettings()
+        if warnings.isEmpty {
+            auditMessage = "All configured workspace, ticket, and repository paths are healthy and valid."
+            isAuditWarning = false
+        } else {
+            auditMessage = "Audit found \(warnings.count) issue(s): " + warnings.joined(separator: "; ")
+            isAuditWarning = true
         }
     }
 }
@@ -430,6 +575,7 @@ private struct CredentialsSettingsTab: View {
     @State private var storedJiraToken: String?
     @State private var storedGitHubToken: String?
     @State private var isTestingJira: Bool = false
+    @State private var isTestingGitHub: Bool = false
     @State private var statusMessage: String?
     @State private var isStatusError: Bool = false
 
@@ -522,6 +668,9 @@ private struct CredentialsSettingsTab: View {
                         Button("Save GitHub Credentials") { saveGitHub() }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
+                        Button(isTestingGitHub ? "Testing…" : "Test Connection") { testGitHub() }
+                            .controlSize(.small)
+                            .disabled(isTestingGitHub || (storedGitHubToken == nil && githubToken.isEmpty))
                         Button("Clear Token") { clearToken(.github) }
                             .controlSize(.small)
                             .disabled(storedGitHubToken == nil)
@@ -623,6 +772,37 @@ private struct CredentialsSettingsTab: View {
         }
         githubToken = ""
         load()
+    }
+
+    private func testGitHub() {
+        persistNonSecrets()
+        if !githubToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            _ = CredentialStore.shared.saveSecret(githubToken, for: .github)
+            githubToken = ""
+            load()
+        }
+
+        guard let token = CredentialStore.shared.readSecret(for: .github), !token.isEmpty else {
+            report("No GitHub token stored to test.", isError: true)
+            return
+        }
+
+        isTestingGitHub = true
+        report("Verifying credentials with GitHub…", isError: false)
+
+        let targetUser = githubUsername
+        Task {
+            let verify = await GitHubService.shared.verifyCredentials(username: targetUser, token: token)
+            await MainActor.run {
+                self.isTestingGitHub = false
+                if verify.success {
+                    let userText = verify.authenticatedUser.map { " for user '\($0)'" } ?? ""
+                    self.report("GitHub connection verified successfully\(userText).", isError: false)
+                } else {
+                    self.report(verify.error ?? "GitHub verification failed.", isError: true)
+                }
+            }
+        }
     }
 
     private func clearToken(_ account: CredentialAccount) {

@@ -86,6 +86,49 @@ public final class GitHubService: @unchecked Sendable {
         return (false, nil)
     }
 
+    public func verifyCredentials(username: String = "", token: String) async -> (success: Bool, authenticatedUser: String?, error: String?) {
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedToken.isEmpty else {
+            return (false, nil, "GitHub Personal Access Token is required.")
+        }
+        guard let url = URL(string: "https://api.github.com/user") else {
+            return (false, nil, "Invalid GitHub API URL.")
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("Bearer \(trimmedToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        req.setValue("miniOps-App", forHTTPHeaderField: "User-Agent")
+        req.timeoutInterval = 15
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse else {
+                return (false, nil, "Invalid server response.")
+            }
+            if http.statusCode == 200 {
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let login = json["login"] as? String {
+                    let expected = username.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !expected.isEmpty && expected.caseInsensitiveCompare(login) != .orderedSame {
+                        return (true, login, "Authenticated as '\(login)' (different from entered '\(expected)').")
+                    }
+                    return (true, login, nil)
+                }
+                return (true, nil, nil)
+            } else if http.statusCode == 401 {
+                return (false, nil, "Bad credentials: Token is invalid or expired (HTTP 401).")
+            } else if http.statusCode == 403 {
+                return (false, nil, "Forbidden: Rate limited or insufficient token scopes (HTTP 403).")
+            } else {
+                return (false, nil, "GitHub API returned status code \(http.statusCode).")
+            }
+        } catch {
+            return (false, nil, "Network request failed: \(error.localizedDescription)")
+        }
+    }
+
     public func fetchUserRepositories(limit: Int = 100) -> [RemoteRepoItem] {
         guard let gh = findGitHubCLI() else { return [] }
 

@@ -708,3 +708,28 @@ public struct GraphifyData: Codable, Sendable {
         self.htmlPath = htmlPath
     }
 }
+
+public struct GraphDatasetChoice: Identifiable, Hashable, Sendable, Codable {
+    public var id: String { key }
+    public let key: String
+    public let label: String
+    public let directoryPath: String
+    public let repoPath: String?
+
+    public init(key: String, label: String, directoryPath: String, repoPath: String? = nil) {
+        self.key = key
+        self.label = label
+        self.directoryPath = directoryPath
+        self.repoPath = repoPath
+    }
+}
+
+public struct NodePosition: Sendable, Hashable, Codable {
+    public var x: Double
+    public var y: Double
+
+    public init(x: Double, y: Double) {
+        self.x = x
+        self.y = y
+    }
+}
