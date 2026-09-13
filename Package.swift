@@ -17,7 +17,9 @@ let package = Package(
     targets: [
         .target(
             name: "MiniOpsCore",
-            dependencies: []
+            dependencies: [
+                .product(name: "SwiftTerm", package: "SwiftTerm")
+            ]
         ),
         .executableTarget(
             name: "MiniOpsApp",

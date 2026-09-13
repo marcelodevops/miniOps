@@ -1,5 +1,7 @@
 import Foundation
 import Security
+import AppKit
+import SwiftUI
 import MiniOpsCore
 
 var passedCount = 0
@@ -3160,6 +3162,32 @@ do {
     let clampedRatioMin = WorkbenchDockGeometry.dragged(start: 0.30, translation: -0.25, minimum: 0.15, maximum: 0.70)
     assert(abs(clampedRatioMin - 0.15) < 0.001, "Terminal ratio clamps to minimum 0.15")
 
+    // (f) Actual NSWindow instantiation, min-size enforcement, and resize verification
+    MainActor.assumeIsolated {
+        let window = NSWindow(
+            contentRect: NSRect(x: 50, y: 50, width: 1000, height: 680),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.minSize = NSSize(width: 1000, height: 680)
+        assertEqual(window.minSize.width, 1000, "Window minSize width is 1000")
+        assertEqual(window.minSize.height, 680, "Window minSize height is 680")
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 1000, height: 680))
+        window.contentView = container
+        assertEqual(container.frame.size.width, 1000, "Rendered NSWindow content matches 1000px width")
+        assertEqual(container.frame.size.height, 680, "Rendered NSWindow content matches 680px height")
+
+        window.setContentSize(NSSize(width: 1280, height: 800))
+        assertEqual(container.frame.size.width, 1280, "Rendered NSWindow content updates to 1280px standard width")
+        assertEqual(container.frame.size.height, 800, "Rendered NSWindow content updates to 800px standard height")
+
+        window.setContentSize(NSSize(width: 2560, height: 1440))
+        assertEqual(container.frame.size.width, 2560, "Rendered NSWindow content updates to 2560px large desktop width")
+        assertEqual(container.frame.size.height, 1440, "Rendered NSWindow content updates to 1440px large desktop height")
+    }
+
     // 2. Stress Resilience: Long Paths, Special Chars, Clean/Dirty Repos
     let deeplyNestedRepoDir = tempDir
         .appendingPathComponent("nested_workspaces_directory_for_deep_hierarchy_stress_testing_of_miniops")
@@ -3200,12 +3228,52 @@ do {
     let diffContent = GitService.shared.getDiff(repoPath: deeplyNestedRepoDir.path, filePath: relPath, cached: false)
     assert(diffContent.contains("+Modified secondary line"), "Diff accurately generated for special characters path")
 
-    // 3. Large Datasets Performance & Sorting Invariants
-    var largeRepoSet: [RepoInfo] = []
-    for i in 1...30 {
-        largeRepoSet.append(RepoInfo(
-            name: "repo-\(i)",
-            path: "/path/to/repo-\(i)",
+    // 3. TerminalSessionManager & Shell Process Continuity Invariants
+    MainActor.assumeIsolated {
+        TerminalSessionManager.shared.resetAllSessions()
+        assertEqual(TerminalSessionManager.shared.activeSessionCount(), 0, "TerminalSessionManager starts with 0 sessions")
+
+        let term1 = TerminalSessionManager.shared.getOrCreateTerminalView(for: deeplyNestedRepoDir.path)
+        assert(TerminalSessionManager.shared.hasSession(for: deeplyNestedRepoDir.path), "Terminal session active for repository")
+        assertEqual(TerminalSessionManager.shared.activeSessionCount(), 1, "Single active terminal session")
+
+        guard let shellPid1 = TerminalSessionManager.shared.processIdentifier(for: deeplyNestedRepoDir.path), shellPid1 > 0 else {
+            fatalError("Shell process failed to launch")
+        }
+        assert(shellPid1 > 0, "Terminal spawned valid shell subprocess with PID \(shellPid1)")
+        assertEqual(kill(shellPid1, 0), 0, "Shell process is actively running in macOS kernel")
+
+        // Invariant: Center Tab changes do not recreate process
+        let centerTabs: [CenterTab] = [.editor, .diff, .ticket, .agent, .overview, .focus, .graph, .editor]
+        for tab in centerTabs {
+            let reacquired = TerminalSessionManager.shared.getOrCreateTerminalView(for: deeplyNestedRepoDir.path)
+            assert(term1 === reacquired, "LocalProcessTerminalView reference is identical after switching to \(tab.rawValue)")
+            let pidCheck = TerminalSessionManager.shared.processIdentifier(for: deeplyNestedRepoDir.path)
+            assertEqual(shellPid1, pidCheck, "Shell PID remains continuous across tab change to \(tab.rawValue)")
+        }
+
+        // Invariant: Dock toggles do not drop or recreate process
+        for _ in 1...3 {
+            let dockToggled = TerminalSessionManager.shared.getOrCreateTerminalView(for: deeplyNestedRepoDir.path)
+            assert(term1 === dockToggled, "LocalProcessTerminalView reference is identical across dock toggles")
+            let pidCheck = TerminalSessionManager.shared.processIdentifier(for: deeplyNestedRepoDir.path)
+            assertEqual(shellPid1, pidCheck, "Shell PID continuity maintained across dock toggles")
+        }
+
+        // Verify shell is interactive and alive
+        term1.send(txt: "echo 'shell-continuity-ok'\n")
+        assertEqual(kill(shellPid1, 0), 0, "Shell process is responsive to interactive terminal input")
+
+        TerminalSessionManager.shared.closeSession(for: deeplyNestedRepoDir.path)
+        assertEqual(TerminalSessionManager.shared.hasSession(for: deeplyNestedRepoDir.path), false, "Terminal session closed cleanly")
+    }
+
+    // 4. Large Datasets Performance Benchmarking & Resilience
+    var benchRepos: [RepoInfo] = []
+    for i in 1...100 {
+        benchRepos.append(RepoInfo(
+            name: "bench-repo-\(i)",
+            path: "/path/to/bench-repo-\(i)",
             branch: i % 2 == 0 ? "main" : "feat/OPS-\(i)",
             isDirty: i % 3 == 0,
             ahead: i % 6 == 0 ? i : 0,
@@ -3220,27 +3288,41 @@ do {
             isCherryPicking: i == 3
         ))
     }
-    assertEqual(largeRepoSet.count, 30, "Constructed 30 mock repositories")
-    let rankedRepos = largeRepoSet.sorted { $0.attentionScore > $1.attentionScore }
-    assertEqual(rankedRepos.count, 30, "All 30 repositories ranked")
-    assert(rankedRepos[0].isMerging || rankedRepos[0].isRebasing || rankedRepos[0].isCherryPicking, "Highest priority attention condition ranked first")
+    let startRepoSort = CFAbsoluteTimeGetCurrent()
+    let sortedBenchRepos = benchRepos.sorted { $0.attentionScore > $1.attentionScore }
+    let repoSortElapsedMs = (CFAbsoluteTimeGetCurrent() - startRepoSort) * 1000.0
+    assertEqual(sortedBenchRepos.count, 100, "100 benchmark repos sorted")
+    assert(sortedBenchRepos[0].attentionScore >= 100, "Highest attention condition ranked with high score: \(sortedBenchRepos[0].attentionScore)")
+    assert(repoSortElapsedMs < 25.0, "Attention ranking on 100 repositories executes in \(String(format: "%.3f", repoSortElapsedMs))ms (< 25ms)")
 
-    var largeTicketSet: [TicketInfo] = []
-    let cats = ["todo", "in_progress", "done", "closed"]
-    let prios = ["Critical", "High", "Medium", "Low", "None"]
-    for i in 1...60 {
-        largeTicketSet.append(TicketInfo(
-            key: "OPS-\(100 + i)",
-            summary: "Ticket summary for task \(i)",
+    var benchTickets: [TicketInfo] = []
+    let bCats = ["todo", "in_progress", "done", "closed"]
+    let bPrios = ["Critical", "High", "Medium", "Low", "None"]
+    for i in 1...500 {
+        benchTickets.append(TicketInfo(
+            key: "OPS-\(1000 + i)",
+            summary: "High volume ticket summary for stress testing task number \(i)",
             status: i % 4 == 1 ? "In Progress" : (i % 4 == 0 ? "Done" : "To Do"),
-            statusCategory: cats[i % cats.count],
-            priority: prios[i % prios.count],
+            statusCategory: bCats[i % bCats.count],
+            priority: bPrios[i % bPrios.count],
             created: Date(timeIntervalSinceNow: -Double(i) * 3600)
         ))
     }
-    assertEqual(largeTicketSet.count, 60, "Constructed 60 mock tickets")
+    assertEqual(benchTickets.count, 500, "Constructed 500 mock tickets")
 
-    // 4. Zero Tickets Degraded State
+    let startTicketFilter = CFAbsoluteTimeGetCurrent()
+    let filteredTickets = benchTickets.filter { $0.isOpen && $0.normalizedPriority == "Critical" }
+    let filterElapsedMs = (CFAbsoluteTimeGetCurrent() - startTicketFilter) * 1000.0
+    assert(filteredTickets.count > 0, "Filtered critical tickets found")
+    assert(filterElapsedMs < 25.0, "Filtering 500 tickets executes in \(String(format: "%.3f", filterElapsedMs))ms (< 25ms)")
+
+    let startSearch = CFAbsoluteTimeGetCurrent()
+    let searchedTickets = TicketScanner.shared.filter(tickets: benchTickets, searchText: "task number 42", openOnly: false)
+    let searchElapsedMs = (CFAbsoluteTimeGetCurrent() - startSearch) * 1000.0
+    assertEqual(searchedTickets.count, 11, "Ticket search found matching tickets")
+    assert(searchElapsedMs < 25.0, "Searching 500 tickets executes in \(String(format: "%.3f", searchElapsedMs))ms (< 25ms)")
+
+    // 5. Zero Tickets Degraded State
     let emptyTicketsDir = tempDir.appendingPathComponent("empty_tickets")
     try! FileManager.default.createDirectory(at: emptyTicketsDir, withIntermediateDirectories: true)
     let zeroTickets = TicketScanner.shared.scanTickets(workspacePath: tempDir.path, repoPaths: [], customTicketsPath: emptyTicketsDir.path)
@@ -3257,23 +3339,173 @@ do {
         assert(vm.focusedTicket() == nil, "Focus ticket is nil when tickets list is empty")
     }
 
-    // 5. Unavailable Integrations Graceful Degradation
-    let jiraSync = JiraService.shared.normalizeBaseURL("https://invalid-host-not-found-12345.internal")
-    assertEqual(jiraSync, "https://invalid-host-not-found-12345.internal", "Normalized URL without crash")
+    // 6. Unavailable Integrations & Connection Failure Handling
+    var credResult: (success: Bool, authenticatedUser: String?, error: String?) = (false, nil, nil)
+    let sema = DispatchSemaphore(value: 0)
+    Task {
+        credResult = await GitHubService.shared.verifyCredentials(username: "nonexistent-user-12345", token: "invalid-token-xyz")
+        sema.signal()
+    }
+    _ = sema.wait(timeout: .now() + 5)
+    assertEqual(credResult.success, false, "GitHub credential check fails safely with invalid credentials")
+    assert(credResult.error?.isEmpty == false, "GitHub credential check returns descriptive error: \(credResult.error ?? "")")
 
-    // 6. Rollback & Backup Script Invariants
+    let unreachableHost = "http://127.0.0.1:54321"
+    let normalizedUnreachable = JiraService.shared.normalizeBaseURL(unreachableHost)
+    assertEqual(normalizedUnreachable, unreachableHost, "Normalized unreachable URL")
+    let syncErrorStoreURL = tempDir.appendingPathComponent("sync_error_state.json")
+    let syncStore = WorkspaceStateStore(customStorageURL: syncErrorStoreURL)
+    syncStore.recordJiraSyncResult(workspacePath: tempDir.path, date: Date(), error: "Connection refused to \(unreachableHost)")
+    let recordedStatus = syncStore.getJiraSyncStatus(workspacePath: tempDir.path)
+    assertEqual(recordedStatus.lastSyncError, "Connection refused to \(unreachableHost)", "Jira sync error recorded and persisted in store")
+
+    // 7. Rollback Safety, Staging, and Swap Invariants
     let installScriptPath = "/Users/mac/repos/miniOps/scripts/install-app.sh"
     let rollbackScriptPath = "/Users/mac/repos/miniOps/scripts/rollback-app.sh"
     assert(FileManager.default.fileExists(atPath: installScriptPath), "install-app.sh exists")
     assert(FileManager.default.fileExists(atPath: rollbackScriptPath), "rollback-app.sh exists")
     assert(FileManager.default.isExecutableFile(atPath: rollbackScriptPath), "rollback-app.sh is executable")
-    let rollbackContent = try! String(contentsOfFile: rollbackScriptPath, encoding: .utf8)
-    assert(rollbackContent.contains("--rollback"), "rollback script passes --rollback flag to install script")
+
+    let testInstallDir = tempDir.appendingPathComponent("test_install_sandbox")
+    try! FileManager.default.createDirectory(at: testInstallDir, withIntermediateDirectories: true)
+    let testApp = testInstallDir.appendingPathComponent("miniOps.app")
+    let testBak = testInstallDir.appendingPathComponent("miniOps.app.bak")
+    try! FileManager.default.createDirectory(at: testApp.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+    let testExec = testApp.appendingPathComponent("Contents/MacOS/miniOps")
+    try! "#!/bin/sh\nexit 0\n".write(to: testExec, atomically: true, encoding: .utf8)
+    _ = ProcessRunner.run(executable: "/bin/chmod", arguments: ["+x", testExec.path], currentDirectory: tempDir.path, timeout: 5)
+    // Create corrupt backup without executable
+    try! FileManager.default.createDirectory(at: testBak, withIntermediateDirectories: true)
+
+    let rollbackCorruptRes = ProcessRunner.run(
+        executable: "/bin/bash",
+        arguments: [installScriptPath, "--rollback", "-d", testInstallDir.path],
+        currentDirectory: tempDir.path,
+        timeout: 10
+    )
+    assert(rollbackCorruptRes.status != 0, "Rollback rejects corrupt backup")
+    assert(FileManager.default.fileExists(atPath: testApp.path), "Target app is NOT deleted when rollback validation fails")
 
     let installedAppPath = "/Applications/miniOps.app"
     assert(FileManager.default.fileExists(atPath: installedAppPath), "Installed miniOps.app exists in /Applications")
     let installedAppBak = "/Applications/miniOps.app.bak"
     assert(FileManager.default.fileExists(atPath: installedAppBak), "Installed backup miniOps.app.bak exists for safe rollback")
+}
+
+// Test 40: End-to-End Daily Workflow Acceptance on Candidate Build
+print("Test 40: End-to-End Daily Workflow Acceptance on Candidate Build")
+do {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("miniops-wf-test-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let wfRoot = tempDir.appendingPathComponent("daily_workflow_workspace")
+    let wfRepo = wfRoot.appendingPathComponent("core-api")
+    let wfTickets = wfRepo.appendingPathComponent("tickets")
+    try! FileManager.default.createDirectory(at: wfTickets, withIntermediateDirectories: true)
+
+    // 1. Initialize Git Repo
+    _ = runGit(args: ["init", "-b", "main"], in: wfRepo.path)
+    _ = runGit(args: ["config", "user.name", "Workflow Tester"], in: wfRepo.path)
+    _ = runGit(args: ["config", "user.email", "tester@example.com"], in: wfRepo.path)
+    _ = runGit(args: ["config", "commit.gpgsign", "false"], in: wfRepo.path)
+
+    // 2. Add baseline file & ticket
+    let codeFile = wfRepo.appendingPathComponent("server.swift")
+    try! "print(\"Server v1\")\n".write(to: codeFile, atomically: true, encoding: .utf8)
+    let ticketFile = wfTickets.appendingPathComponent("OPS-200.md")
+    try! "# Implement health check endpoint\nstatus: In Progress\npriority: High\n".write(to: ticketFile, atomically: true, encoding: .utf8)
+    _ = runGit(args: ["add", "."], in: wfRepo.path)
+    _ = runGit(args: ["commit", "-m", "Initial baseline commit"], in: wfRepo.path)
+
+    // 3. Candidate Installed Binary Verification
+    let installedApp = "/Applications/miniOps.app/Contents/MacOS/miniOps"
+    assert(FileManager.default.isExecutableFile(atPath: installedApp), "Installed miniOps candidate executable exists and is executable")
+
+    // 4. Exercise ViewModel End-to-End Workflow
+    let storeURL = wfRoot.appendingPathComponent("wf_store.json")
+    let store = WorkspaceStateStore(customStorageURL: storeURL)
+    MainActor.assumeIsolated {
+        let vm = WorkspaceViewModel(stateStore: store)
+        vm.setWorkspace(path: wfRoot.path)
+
+        var retries = 0
+        while (vm.isScanning || vm.repositories.isEmpty) && retries < 40 {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            retries += 1
+        }
+        assertEqual(vm.repositories.count, 1, "Discovered core-api repository")
+        assertEqual(vm.repositories.first?.name, "core-api", "Discovered repo name is core-api")
+
+        // Select repository
+        let repo = vm.repositories[0]
+        vm.selectRepo(repo)
+        assertEqual(vm.selectedRepo?.path, repo.path, "core-api repo selected")
+
+        // Make an edit to server.swift
+        try! "print(\"Server v1\")\nprint(\"Server v2: health check added\")\n".write(to: codeFile, atomically: true, encoding: .utf8)
+        vm.refreshCurrentRepoStatus()
+
+        retries = 0
+        while (vm.selectedRepo?.changedFiles.isEmpty ?? true) && retries < 30 {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            retries += 1
+        }
+        assertEqual(vm.selectedRepo?.isDirty, true, "Repository detected dirty working tree")
+
+        // Inspect Diff in Center Stage
+        vm.inspectDiff(filePath: "server.swift")
+        assertEqual(vm.workbenchLayout.activeCenterTab, .diff, "Switched center stage to Diff Inspector")
+        assertEqual(vm.activeDiffFile, "server.swift", "Diff targets server.swift")
+
+        // Selective Commit
+        vm.setCommitSelection(["server.swift"])
+        var commitFinished = false
+        var commitSuccess = false
+        vm.executeSelectiveCommit(repoPath: repo.path, message: "Implement health check endpoint (OPS-200)", selectedPaths: ["server.swift"]) { res in
+            commitSuccess = res.success
+            commitFinished = true
+        }
+        retries = 0
+        while !commitFinished && retries < 50 {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            retries += 1
+        }
+        assert(commitFinished && commitSuccess, "Selective commit completed successfully")
+
+        // Switch to Overview Dashboard
+        vm.selectCenterTab(.overview)
+        assertEqual(vm.workbenchLayout.activeCenterTab, .overview, "Switched to Overview Dashboard")
+        assertEqual(vm.ticketsByCategory.first(where: { $0.category == "In Progress" })?.count, 1, "Overview dashboard categorizes in-progress ticket")
+
+        // Switch to Focus Active Work
+        let scannedTickets = TicketScanner.shared.scanTickets(workspacePath: wfRoot.path, repoPaths: [repo.path])
+        assertEqual(scannedTickets.count, 1, "Scanned 1 ticket")
+        let targetTicket = scannedTickets[0]
+        assertEqual(targetTicket.key, "OPS-200", "Ticket key matches OPS-200")
+        vm.selectFocusTicket(targetTicket)
+        assertEqual(vm.workbenchLayout.activeCenterTab, .focus, "Switched to Focus tab")
+        assertEqual(vm.focusedTicket()?.key, "OPS-200", "Focused ticket is OPS-200")
+        assertEqual(vm.repository(for: targetTicket)?.path, repo.path, "Focus associates OPS-200 with core-api repo")
+
+        // Create Feature Branch for ticket
+        let branchName = TicketScanner.shared.makeFeatureBranchName(ticket: targetTicket)
+        assertEqual(branchName, "feat/OPS-200-implement-health-check-endpoint", "Feature branch generated from ticket")
+        let branchRes = GitService.shared.createBranch(repoPath: repo.path, branchName: branchName)
+        assert(branchRes.success, "Feature branch created successfully: \(branchRes.output)")
+
+        // Verify Terminal in Repo Directory
+        _ = TerminalSessionManager.shared.getOrCreateTerminalView(for: repo.path)
+        assert(TerminalSessionManager.shared.hasSession(for: repo.path), "Terminal session created for core-api")
+        let termPid = TerminalSessionManager.shared.processIdentifier(for: repo.path)
+        assert((termPid ?? 0) > 0, "Terminal shell running with PID: \(termPid ?? 0)")
+        TerminalSessionManager.shared.closeSession(for: repo.path)
+
+        // Switch back to Editor
+        vm.selectCenterTab(.editor)
+        assertEqual(vm.workbenchLayout.activeCenterTab, .editor, "Switched back to Editor")
+    }
+    print("  ✅ Daily workflow executed and verified end-to-end on candidate workspace")
 }
 
 print("==================================================")

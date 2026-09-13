@@ -182,8 +182,8 @@ public final class TicketScanner: @unchecked Sendable {
     /// Returns nil when the ticket file lives outside the repository, so a ticket stored
     /// in the workspace root can never be opened as if it belonged to the selected repo.
     public func repoRelativePath(forTicketPath ticketPath: String, repoPath: String) -> String? {
-        let repoRoot = URL(fileURLWithPath: (repoPath as NSString).expandingTildeInPath).standardized.path
-        let filePath = URL(fileURLWithPath: (ticketPath as NSString).expandingTildeInPath).standardized.path
+        let repoRoot = URL(fileURLWithPath: (repoPath as NSString).expandingTildeInPath).resolvingSymlinksInPath().standardized.path
+        let filePath = URL(fileURLWithPath: (ticketPath as NSString).expandingTildeInPath).resolvingSymlinksInPath().standardized.path
         let prefix = repoRoot.hasSuffix("/") ? repoRoot : repoRoot + "/"
 
         guard filePath.hasPrefix(prefix) else { return nil }

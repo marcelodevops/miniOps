@@ -63,10 +63,39 @@ if [ "$DO_ROLLBACK" = true ]; then
         echo "Error: No previous backup found at $BACKUP_APP for rollback." >&2
         exit 1
     fi
-    echo "==> Rolling back to previous build from $BACKUP_APP..."
-    rm -rf "$TARGET_APP"
-    cp -R "$BACKUP_APP" "$TARGET_APP"
-    codesign --force --deep --sign - "$TARGET_APP"
+    if [ ! -x "$BACKUP_APP/Contents/MacOS/$APP_NAME" ]; then
+        echo "Error: Backup at $BACKUP_APP is corrupt (missing executable)." >&2
+        exit 1
+    fi
+
+    echo "==> Staging and validating rollback from $BACKUP_APP..."
+    STAGING_APP="$DEST_DIR/.${APP_NAME}.rollback.staging.$$"
+    rm -rf "$STAGING_APP"
+    cp -R "$BACKUP_APP" "$STAGING_APP"
+
+    codesign --force --deep --sign - "$STAGING_APP"
+    if ! codesign --verify --deep --strict "$STAGING_APP" 2>/dev/null; then
+        echo "Error: Staged rollback failed code-signing verification. Aborting rollback without modifying installed app." >&2
+        rm -rf "$STAGING_APP"
+        exit 1
+    fi
+
+    echo "==> Swapping verified rollback into $TARGET_APP..."
+    if [ -d "$TARGET_APP" ]; then
+        TEMP_OLD="$DEST_DIR/.${APP_NAME}.prerollback.$$"
+        mv "$TARGET_APP" "$TEMP_OLD"
+        if mv "$STAGING_APP" "$TARGET_APP"; then
+            rm -rf "$TEMP_OLD"
+        else
+            echo "Error: Failed to move staged rollback into place; restoring original installation." >&2
+            mv "$TEMP_OLD" "$TARGET_APP"
+            rm -rf "$STAGING_APP"
+            exit 1
+        fi
+    else
+        mv "$STAGING_APP" "$TARGET_APP"
+    fi
+
     xattr -d com.apple.quarantine "$TARGET_APP" 2>/dev/null || true
     echo "==> Successfully rolled back ${APP_NAME} to $TARGET_APP"
     if [ "$LAUNCH_AFTER" = true ]; then
@@ -83,18 +112,48 @@ if [ "$FORCE_BUILD" = true ] || [ ! -d "$APP_SOURCE" ]; then
     "$REPO_ROOT/scripts/build-app.sh"
 fi
 
+if [ ! -x "$APP_SOURCE/Contents/MacOS/$APP_NAME" ]; then
+    echo "Error: Built app source at $APP_SOURCE is invalid or missing executable." >&2
+    exit 1
+fi
+
 echo "==> Installing ${APP_NAME}.app to $DEST_DIR..."
 mkdir -p "$DEST_DIR"
 
-if [ -d "$TARGET_APP" ]; then
-    echo "    Backing up previous installation to $BACKUP_APP for safe rollback..."
-    rm -rf "$BACKUP_APP"
-    cp -R "$TARGET_APP" "$BACKUP_APP"
-    rm -rf "$TARGET_APP"
+# Stage and validate candidate app first before touching existing target or backup
+STAGING_APP="$DEST_DIR/.${APP_NAME}.install.staging.$$"
+rm -rf "$STAGING_APP"
+cp -R "$APP_SOURCE" "$STAGING_APP"
+
+codesign --force --deep --sign - "$STAGING_APP"
+if ! codesign --verify --deep --strict "$STAGING_APP" 2>/dev/null; then
+    echo "Error: Staged app failed code-signing verification. Aborting installation without touching existing install." >&2
+    rm -rf "$STAGING_APP"
+    exit 1
 fi
 
-cp -R "$APP_SOURCE" "$TARGET_APP"
-codesign --force --deep --sign - "$TARGET_APP"
+# Stage backup of current installation if present
+if [ -d "$TARGET_APP" ]; then
+    echo "    Backing up previous installation to $BACKUP_APP for safe rollback..."
+    BACKUP_STAGING="$DEST_DIR/.${APP_NAME}.backup.staging.$$"
+    rm -rf "$BACKUP_STAGING"
+    cp -R "$TARGET_APP" "$BACKUP_STAGING"
+    rm -rf "$BACKUP_APP"
+    mv "$BACKUP_STAGING" "$BACKUP_APP"
+
+    TEMP_OLD="$DEST_DIR/.${APP_NAME}.old.$$"
+    mv "$TARGET_APP" "$TEMP_OLD"
+    if mv "$STAGING_APP" "$TARGET_APP"; then
+        rm -rf "$TEMP_OLD"
+    else
+        echo "Error: Failed to swap staged app into place; restoring original installation." >&2
+        mv "$TEMP_OLD" "$TARGET_APP"
+        rm -rf "$STAGING_APP"
+        exit 1
+    fi
+else
+    mv "$STAGING_APP" "$TARGET_APP"
+fi
 
 # Remove quarantine attribute if present
 xattr -d com.apple.quarantine "$TARGET_APP" 2>/dev/null || true

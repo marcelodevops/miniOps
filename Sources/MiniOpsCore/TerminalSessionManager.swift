@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 import SwiftTerm
-import MiniOpsCore
 
 @MainActor
 public final class TerminalSessionManager: ObservableObject {
@@ -106,6 +105,20 @@ public final class TerminalSessionManager: ObservableObject {
         for repoPath in sessions.keys {
             closeSession(for: repoPath)
         }
+    }
+
+    public func activeSessionCount() -> Int {
+        sessions.count
+    }
+
+    public func processIdentifier(for repoPath: String) -> pid_t? {
+        let normalized = (repoPath as NSString).expandingTildeInPath
+        return sessions[normalized]?.process.shellPid
+    }
+
+    public func getSession(for repoPath: String) -> LocalProcessTerminalView? {
+        let normalized = (repoPath as NSString).expandingTildeInPath
+        return sessions[normalized]
     }
 }
 
